@@ -1,0 +1,53 @@
+menu "CrowPanel Wi-Fi"
+
+    config APP_WIFI_SSID
+        string "Network name (SSID)"
+        default ""
+        help
+            The network to join at boot. Empty: only scan, and join nothing.
+            Set it here (idf.py menuconfig): it is kept in sdkconfig, which the
+            project's .gitignore keeps out of git. Don't put it in
+            sdkconfig.defaults, which is committed.
+
+    config APP_WIFI_PASSWORD
+        string "Password"
+        default ""
+        help
+            The network's password. Empty for an open network.
+
+endmenu
+
+menu "ArtShow slideshow"
+
+    config ARTSHOW_INTERVAL_S
+        int "Seconds per picture"
+        range 3 86400
+        default 15
+
+    config ARTSHOW_FADE_MS
+        int "Transition (ms)"
+        range 200 5000
+        default 1000
+
+    config ARTSHOW_VARIED_TRANSITIONS
+        bool "Varied transitions"
+        default y
+        help
+            On: each change of picture is one of iris, ink drop, brushstroke,
+            mosaic, sand, blinds, clock or dissolve, at random.
+            Off: always the dissolve (a crossfade).
+
+    config ARTSHOW_SHUFFLE
+        bool "Shuffle (a new order each round)"
+        default y
+        help
+            Off: the pictures in name order, folders included.
+
+    config ARTSHOW_FILL
+        bool "Fill the screen (crop)"
+        default n
+        help
+            On: each picture is cropped to the screen's shape and fills it.
+            Off: each is shown whole, with black bars.
+
+endmenu

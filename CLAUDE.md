@@ -1,0 +1,173 @@
+# ArtShow
+
+An ESP-IDF 6.x app for the **Elecrow CrowPanel Advanced 7" / 10.1"** (ESP32-P4,
+hardware V1.2), scaffolded by p4wiz on 2026-10-18 with: Wi-Fi (esp_hosted 2.12.x), audio.
+
+The wizard and its full recipe live in the advance-p4-wiz repo
+(https://github.com/HaikuZen/advance-p4-wiz; here: `/root/Scaricati/CYD/advance-p4-wiz`). Its
+`docs/advance-p4-cookbook.md` explains every board value and pitfall below.
+
+## Files
+
+| path | what |
+|---|---|
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi), NVS, then the slideshow, the Wi-Fi button and the brightness slider built under the LVGL lock |
+| `main/slideshow.c/.h` | the microSD picture slideshow: see Slideshow below |
+| `main/transition.c/.h` | the change from one picture to the next: see Slideshow below |
+| `main/brightness_ui.c/.h` | the backlight: a button bottom left opens a slider (folds away after 5 s untouched); the level is kept in NVS (`artshow`/`bright`) |
+| `main/board.c/.h` | the board: power (LDO3 for the D-PHY), I2C, PWM backlight, the EK79007 MIPI-DSI panel (1024x600), GT911 touch, LVGL through esp_lvgl_port. `board_set_brightness(0..100)`, `board_i2c_bus()` |
+| `main/board_pins.h` | every pin and panel value, proven on the bench board. Don't change them without a reason from the hardware |
+| `main/idf_component.yml` | the component dependencies. It must stay in `main/`: a manifest at the project root is silently ignored |
+| `sdkconfig.defaults` | the committed config. `sdkconfig` is generated and gitignored |
+| `main/wifi.c/.h`, `main/wifi_ui.c`, `main/Kconfig.projbuild` | Wi-Fi through the C6: see Wi-Fi below |
+| `main/audio.c/.h` | the speaker: see Audio below |
+| `main/Kconfig.projbuild` | also `idf.py menuconfig` > ArtShow slideshow: seconds per picture, transition length, varied transitions, shuffle, fill (crop) |
+
+## Build and flash
+
+```sh
+idf.py set-target esp32p4 build     # once; after that, build alone
+/root/Scaricati/CYD/advance-p4-wiz/p4wiz.py --check .                # every sdkconfig.defaults line made it into sdkconfig?
+idf.py -p /dev/ttyUSB3 -b 460800 flash monitor
+```
+
+- Run `idf.py` from an ESP-IDF 6.x terminal (`export.sh`, or EIM's `activate_idf_*.sh`).
+- After editing `sdkconfig.defaults`, delete `sdkconfig` and rebuild, or the
+  change is not applied. Then run `--check` again.
+- Flash through the **UART** USB socket (CH340), at **460800** baud: 921600
+  corrupted reads on this board. If it won't enter the bootloader, hold BOOT,
+  press RESET, let go of BOOT.
+- Flashing replaces whatever the board runs. Ask before flashing a board, and
+  offer a backup first: `esptool.py -p /dev/ttyUSB3 -b 460800 read_flash 0 0x1000000 backup.bin`.
+
+## Rules for working on this app
+
+- **Chip revision:** **rev v1.x** (the bench board is v1.3): `sdkconfig.defaults` builds for it. A rev v1.x P4 needs
+  `CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y` and `CONFIG_ESP32P4_REV_MIN_100=y`;
+  an image built for rev >= 3 (IDF 6.x's default) builds fine but won't boot on
+  it. Check a board with `esptool.py -p /dev/ttyUSB3 -b 460800 chip_id`.
+- **The DSI clock:** on rev v1.x, `board.c` uses
+  `MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT_LEGACY`. IDF 6.1's plain `_DEFAULT` is
+  XTAL, which only rev >= 3 has: `esp_lcd_new_dsi_bus` aborts at boot.
+- **LVGL 9.6:** any LVGL call from outside the LVGL task holds
+  `lvgl_port_lock(0)` (it waits forever; the lock is recursive). Use 9.6's API:
+  the per-flag setters (`lv_obj_set_hidden`, `lv_obj_set_clickable`, ...),
+  `LV_LABEL_LONG_MODE_*`; `lv_list` is deprecated, so build lists as a flex
+  column. Fonts: Montserrat 14, 24 and 32 are enabled in `sdkconfig.defaults`;
+  add a `CONFIG_LV_FONT_MONTSERRAT_<n>=y` line for others.
+- The screen is 1024x600, landscape. The panel can't swap x/y.
+- **No `[` or `]` in the project path:** LVGL's source glob breaks.
+- **No codec:** the schematic shows an ES8311, but the board has none. The I2C
+  bus holds only the GT911 (0x5d) and the STC8 helper (0x2f).
+- Keep the build free of warnings, and grep the build log for "unknown kconfig
+  symbol": it means a `sdkconfig.defaults` line was silently dropped.
+- Don't write secrets into committed files (`sdkconfig.defaults`, sources).
+
+## Harmless log lines
+
+- `W gpio: conflict found for GPIO[42]`: the GT911 INT pin; touch works.
+- `E lcd_panel: swap_xy is not supported by this panel`: esp_lvgl_port asks
+  the EK79007; nothing breaks.
+
+## Wi-Fi (esp_hosted 2.12.x)
+
+The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
+18, CMD 19, D0..D3 17..14, C6 reset GPIO 32). esp_wifi_remote forwards the plain
+`esp_wifi_*` API to it, so **every `esp_wifi_*` call is an RPC to the C6**.
+
+- `main/wifi.c/.h`: one Wi-Fi task owns every esp_wifi call. Others post it a
+  message (`wifi_scan`, `wifi_join`, `wifi_forget`) and get callbacks
+  (`wifi_on_status`, the scan callback), which run in the Wi-Fi task: take the
+  LVGL lock in them before touching the UI. `wifi_start()` returns at once.
+  Add new Wi-Fi work as a message to that task, not as calls from elsewhere.
+- At boot it scans once (for the log), then joins the network saved on screen
+  (NVS namespace `p4wifi`), else the menuconfig one, and rejoins with a backoff
+  (1, 2, 4 ... 30 s) after each drop. A network set on screen is saved once it
+  gets an IP.
+- `main/wifi_ui.c`: the status button (bottom right: the Wi-Fi icon only, white
+  when connected, dim grey when not) and the setup panel on
+  `lv_layer_top()`: scan list, password, Connect, Forget.
+- `main/Kconfig.projbuild`: `idf.py menuconfig` > CrowPanel Wi-Fi sets a
+  fallback network. It lands in `sdkconfig`, which is gitignored. **Never put
+  the SSID or password in `sdkconfig.defaults`**: that file is committed.
+- The password ends up as **plain text** in `build/*.bin` and in the board's
+  flash, either way. Don't share or upload such builds or flash backups.
+- A failed Wi-Fi step logs and turns Wi-Fi off; it never reboots the app. Keep
+  it that way: no `ESP_ERROR_CHECK` in the Wi-Fi code.
+- Disconnect reasons (`esp_wifi_types_generic.h`): 15 handshake timeout (often a
+  wrong password), 201 no AP found, 202 auth failed, 8 we left.
+- The `CONFIG_ESP_HOSTED_*` lines in `sdkconfig.defaults` are for esp_hosted
+  2.12.x only. **esp_hosted 3.x renamed every option**: 2.x names under 3.x
+  still build, but with the wrong SDIO pins and C6 reset pin, and the only sign
+  is "unknown kconfig symbol" in the build log. After a config change, check
+  that `sdkconfig` has D0 = 17 and reset = 32 (`p4wiz.py --check .` prints them).
+- Elecrow ships the C6 with esp_hosted 2.12.3. esp_hosted 2.12.x matches it.
+- esp_hosted warns that `CONFIG_FREERTOS_HZ` is 100 and it recommends 1000.
+  Wi-Fi works at 100.
+
+## Audio
+
+- `main/audio.c/.h`: plain I2S into the speaker amps (BCLK 22, WS 21, DOUT 23),
+  no codec. `audio_init()` after `board_init()`, then `audio_beep(hz, ms)`.
+- The amps' enable, GPIO 30, is **active low** (10k pull-up: off by default).
+
+## Slideshow
+
+- `main/slideshow.c`: one task mounts the microSD card on `/sdcard`, lists every
+  `.jpg`/`.jpeg` (any folder, 4 deep, up to 2000; dot files skipped), decodes
+  each with the P4's hardware JPEG engine into PSRAM, box-scales it into a
+  1024x600 RGB565 buffer (`s_next`), and `transition.c` moves the one on show
+  (`s_out`, the only `lv_image`) to it. The next picture loads into `s_next`
+  during the countdown, once the transition is done with it, so it shows
+  on time (and at once on a right tap; a left tap loads the previous one). Taps on the screen's left / right third:
+  previous / next.
+- The SD slot: SDMMC **slot 0**, 1-bit, CLK 43, CMD 44, D0 39 (Elecrow's P4 SD
+  lesson), internal pull-ups, IO powered by LDO4 (`board.c` takes it at 3.3 V).
+  esp_hosted has **slot 1** of the same SDMMC host for the C6: never deinit the
+  host, only slot 0. D1..D3 stay unused: 40..42 are touch and LCD lines.
+  **Set `host.slot = SDMMC_HOST_SLOT_0` by hand:** on the P4, `SDMMC_HOST_DEFAULT()`
+  picks slot 1. A mount on slot 1 fails ("slot is not available"), its cleanup
+  removes esp_hosted's slot, and esp_hosted asserts: the board reboots in a loop.
+  **No card init while Wi-Fi runs:** a card init changes the controller's
+  clock, and doing it while esp_hosted's link to the C6 is up (or coming up)
+  times out (0x107) and breaks that link: esp_hosted logs "Unrecoverable host
+  sdio state" and restarts the board. Reads once both are up are fine. So
+  `app_main` mounts the card once, before `wifi_start()` (esp_hosted's link
+  starts in `esp_wifi_init`). No remounts: with no card, no pictures, or a card
+  that stops reading, the screen says so and a tap restarts the board.
+  **A card left mid-read:** a reset of the board (the card keeps its power)
+  in the middle of a read leaves the card holding D0; the first clock update
+  then waits for ever and jams the whole host, Wi-Fi's slot too (no Wi-Fi that
+  boot). `sd_unstick()` clocks the card by hand and sends it CMD0 before the
+  mount: the log line "card D0 BUSY, after CMD0 idle" is that case, handled.
+- `main/transition.c`: each change is one effect at random (never the same twice
+  in a row): dissolve, iris, ink drop, brushstroke, mosaic, sand, blinds, clock.
+  An effect is only a map: per 4x4 block, when it starts to turn (0..255). A
+  20 ms timer in the LVGL task blends the blocks the front has reached from a
+  snapshot of the old picture to the new (RGB565, 33 alpha steps; a block row's
+  alphas first, then each pixel row streamed), and invalidates one area per
+  20 px band (30 areas: LVGL keeps 32). Not LVGL objects per tile: LVGL's heap
+  is 64 KB. New effect: a map function and a row in `s_fx`. Speed is PSRAM
+  bandwidth (the panel's scan-out, LVGL's two framebuffers and three screen
+  buffers share it): per frame ~18 ms blend + ~25 ms LVGL, 17-22 fps. The
+  PPA draws the picture into the framebuffer (`CONFIG_LV_USE_PPA`, `_IMG`;
+  it needs `CONFIG_LV_DRAW_BUF_ALIGN=64`, the cache line, and `s_out`
+  64-byte aligned); the CPU copy was ~40 ms. Whole-screen redraws each
+  frame were slower (7-12 fps) and fixed nothing.
+  At the end it copies the new picture whole and redraws the whole screen:
+  rounding on the way must never leave blocks short of fully turned (that
+  left ghosts of the old picture). With LVGL's direct mode and two
+  framebuffers, the off-screen one lags until the next refresh (LVGL syncs it
+  then): comparing it with the picture after a transition shows differences,
+  and that's fine. `menuconfig` > ArtShow: the length (1000 ms), and dissolve-only.
+- The slideshow task runs at idle priority: a software decode doesn't yield for
+  5-9 s, and at any higher priority core 1's idle task starves (task watchdog).
+- Two decoders. The P4's JPEG engine when the full-size picture fits in
+  `DEC_MAX` (8 MB of RGB565, ~4 MP): ~50 ms. Bigger ones (the card's 4096 px
+  pictures): `esp_new_jpeg` in software, shrunk 1/2, 1/4 or 1/8 while decoding
+  (to multiples of 8, rounded up: no less than 1/8), ~3-9 s plus ~1.5 s to read the file over 1-bit SD. The
+  engine can't shrink, and a 4096x3000 picture at full size (24 MB) doesn't fit
+  in PSRAM. Both do **baseline only**: progressive JPEGs are skipped (logged).
+  EXIF rotation is ignored.
+- File names: `CONFIG_FATFS_API_ENCODING_UTF_8` (accented names, not 8.3 ones).
+- The SD clock is 20 MHz (`SD_FREQ_KHZ`); Elecrow's lesson uses 10 MHz if a card is flaky.
