@@ -31,7 +31,7 @@
 static const char *TAG = "sunmoon";
 
 static lv_obj_t *s_page, *s_sub, *s_note, *s_body, *s_chart, *s_moon;
-static lv_obj_t *s_rise, *s_noon, *s_set, *s_length, *s_golden, *s_noon_alt;
+static lv_obj_t *s_rise, *s_noon, *s_set, *s_length, *s_change, *s_golden, *s_noon_alt;
 static lv_obj_t *s_phase, *s_lit_label, *s_moon_rs, *s_full, *s_new, *s_season;
 static lv_timer_t *s_tick;
 
@@ -177,10 +177,11 @@ static void work_out_day(time_t now) {
         long ad = labs(d);
         if (ad >= 60) snprintf(c, sizeof c, "%ld min %ld s", ad / 60, ad % 60);
         else snprintf(c, sizeof c, "%ld s", ad);
-        lv_label_set_text_fmt(s_length, "Day length %ld h %ld min   \xC2\xB7   %s %s than yesterday", len / 3600,
-                              len % 3600 / 60, c, d < 0 ? "shorter" : "longer");
+        lv_label_set_text_fmt(s_length, "Day length %ld h %ld min", len / 3600, len % 3600 / 60);
+        lv_label_set_text_fmt(s_change, "%s %s than yesterday", c, d < 0 ? "shorter" : "longer");
     } else {
         lv_label_set_text(s_length, s_day.up_all_day ? "The sun doesn't set today" : "The sun doesn't rise today");
+        lv_label_set_text(s_change, "");
     }
     if (s_day.golden_am[0] || s_day.golden_pm[1]) {
         hm(a, sizeof a, s_day.golden_am[0]);
@@ -268,6 +269,14 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, 
     return l;
 }
 
+/* a label in a column: as wide as it, wrapping */
+static lv_obj_t *wrapped(lv_obj_t *parent, const lv_font_t *font, uint32_t color) {
+    lv_obj_t *l = label(parent, font, color, 0, 0);
+    lv_obj_set_width(l, LV_PCT(100));
+    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_WRAP);
+    return l;
+}
+
 /* a caption over a big time: "Sunrise" / "07:38" */
 static lv_obj_t *big_time(lv_obj_t *parent, const char *caption, int32_t x, int32_t y) {
     lv_label_set_text(label(parent, &art_font_16, MINOR, x, y), caption);
@@ -315,9 +324,19 @@ lv_obj_t *sun_moon_create(lv_obj_t *parent) {
     s_rise = big_time(s_body, "Sunrise", 24, 258);
     s_noon = big_time(s_body, "Solar noon", 24 + 166, 258);
     s_set = big_time(s_body, "Sunset", 24 + 332, 258);
-    s_length = label(s_body, &art_font_20, TEXT, 24, 330);
-    s_golden = label(s_body, &art_font_20, GOLDEN, 24, 362);
-    s_noon_alt = label(s_body, &art_font_16, MINOR, 24, 394);
+    /* the rest of the sun's: a column kept to the left half (the moon's is at 548) */
+    lv_obj_t *col = lv_obj_create(s_body);
+    lv_obj_remove_style_all(col);
+    lv_obj_set_pos(col, 24, 328);
+    lv_obj_set_size(col, 500, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(col, 4, 0);
+    lv_obj_set_clickable(col, false);
+    s_length = wrapped(col, &art_font_20, TEXT);
+    s_change = wrapped(col, &art_font_16, MINOR);
+    s_golden = wrapped(col, &art_font_20, GOLDEN);
+    lv_obj_set_style_pad_top(s_golden, 6, 0);
+    s_noon_alt = wrapped(col, &art_font_16, MINOR);
 
     /* the moon */
     s_moon = lv_obj_create(s_body);
@@ -332,6 +351,11 @@ lv_obj_t *sun_moon_create(lv_obj_t *parent) {
     s_moon_rs = label(s_body, &art_font_20, TEXT, 548, 278);
     s_full = label(s_body, &art_font_20, TEXT, 548, 330);
     s_new = label(s_body, &art_font_20, TEXT, 548, 362);
+    lv_obj_t *moon_text[] = { s_moon_rs, s_full, s_new };
+    for (int k = 0; k < 3; k++) {   /* kept to the right half */
+        lv_obj_set_width(moon_text[k], 1000 - 548);
+        lv_label_set_long_mode(moon_text[k], LV_LABEL_LONG_MODE_DOTS);
+    }
 
     /* the season, across the bottom */
     s_season = label(s_body, &art_font_24, TEXT, 24, 448);
