@@ -11,6 +11,12 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_SPEED_200M=y
+# mbedTLS's buffers (~40 KB a connection) in PSRAM: the weather and artwork
+# pages connect at the same time, and internal RAM is what Wi-Fi needs
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# a rev v1.x P4 has no ECDSA peripheral: every TLS connection logged "ECDSA
+# peripheral not supported on this chip revision" and verified in software anyway
+# CONFIG_MBEDTLS_HARDWARE_ECDSA_VERIFY is not set
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 

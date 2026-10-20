@@ -11,12 +11,15 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, the clock and weather pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather task |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, the clock, weather and artwork pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
 | `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
+| `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
+| `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file), JSON path helpers, cJSON in PSRAM |
+| `main/fonts/` | Montserrat 16/20/24/32 with Latin-1, Latin Extended-A and typographic punctuation (`art_font_*`): the museum's names. LVGL's built-in fonts are ASCII only |
 | `main/slideshow.c/.h` | the microSD picture slideshow: see Slideshow below |
 | `main/transition.c/.h` | the change from one picture to the next: see Slideshow below |
 | `main/brightness_ui.c/.h` | the backlight: a button bottom left opens a slider (folds away after 5 s untouched); the level is kept in NVS (`artshow`/`bright`) |
@@ -243,3 +246,32 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   (circles, rounded bars, lines), so they scale to any size and look the same
   for every provider. The moon's bite takes the color of the first opaque
   background above it.
+
+## Artwork
+
+- `main/artwork.c`: a painting a day from the Metropolitan Museum's open API
+  (no key). `v1.1/search?isHighlight=true&hasImages=true&medium=Paintings`
+  (~420 hits, paged by `offset`/`limit`; the old `v1/search` was retired on
+  2026-10-01) picks the hit by the date hashed; `v1/objects/<id>` gives the
+  text, `primaryImageSmall` (~600 px, baseline) to show and `primaryImage`
+  (1.5-4 MB, up to ~4000 px, baseline) to save. Not public domain or no
+  picture: another hit 97 on (the hits run by department). "Another" picks at
+  random; the next day brings the day's back.
+- The "about": the painting's English Wikipedia summary (Wikidata item >
+  `enwiki` sitelink > `rest_v1/page/summary`); most have no page, then the
+  artist's. The page says "From Wikipedia, about ...": its text is CC BY-SA.
+- The Art Institute of Chicago's API was the first choice; its image server
+  answers non-browsers with a Cloudflare challenge (403), so it can't work here.
+- The picture: decoded with `esp_new_jpeg` (software; shrinks while decoding if
+  big) and box-fitted into 600x460, rows 64-byte aligned for the PPA. Two
+  buffers: one on show, one to fill.
+- Save (top right): the full-size picture, streamed to
+  `/sdcard/Artwork of the Day/<artist> - <title>.jpg` 16 KB at a time
+  (`net_download`; ~300 KB/s, so 5-30 s, with a percentage on the page). Card
+  writes while Wi-Fi runs are fine (measured); only card inits aren't. The
+  slideshow lists the card at boot: saved ones show after a restart.
+- TLS: mbedTLS allocates in PSRAM (`CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC`): the
+  weather and artwork tasks connect at the same time at boot, and internal RAM
+  fell to 91 KB free. `CONFIG_MBEDTLS_HARDWARE_ECDSA_VERIFY` is off: a rev v1.x
+  P4 has no ECDSA peripheral (each connection logged an error, then verified in
+  software anyway).

@@ -4,9 +4,7 @@
  * weather_t, the same for every provider, to the page. */
 #include "weather.h"
 #include "wifi.h"
-#include "cJSON.h"
-#include "esp_http_client.h"
-#include "esp_crt_bundle.h"
+#include "net.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "nvs.h"
@@ -21,7 +19,6 @@
 #include <time.h>
 
 #define CONFIG_PATH "/sdcard/config.json"
-#define MAX_BODY    (256 * 1024)
 #define ERR_LEN     160
 #define NPROV       4
 #define NVS_NS      "artshow"
@@ -51,34 +48,6 @@ static volatile int s_want = -1;       /* picked on the page, for the task to sw
 
 static weather_cb_t s_cb;
 static TaskHandle_t s_task;
-
-/* ---- JSON: a dotted path ("weather.0.id": a digit indexes an array) ---- */
-
-static const cJSON *at(const cJSON *o, const char *path) {
-    char key[32];
-    while (o && *path) {
-        size_t k = strcspn(path, ".");
-        if (k >= sizeof key) return NULL;
-        memcpy(key, path, k);
-        key[k] = 0;
-        path += k + (path[k] == '.');
-        o = isdigit((unsigned char)key[0]) && cJSON_IsArray(o) ? cJSON_GetArrayItem(o, atoi(key))
-                                                                 : cJSON_GetObjectItemCaseSensitive(o, key);
-    }
-    return o;
-}
-
-static double num(const cJSON *o, const char *path, double def) {
-    const cJSON *v = at(o, path);
-    if (cJSON_IsNumber(v)) return v->valuedouble;
-    if (cJSON_IsString(v) && v->valuestring[0]) return atof(v->valuestring);   /* some send "40" */
-    return def;
-}
-
-static const char *str(const cJSON *o, const char *path) {
-    const cJSON *v = at(o, path);
-    return cJSON_IsString(v) ? v->valuestring : NULL;
-}
 
 /* ---- small helpers ---- */
 
@@ -110,15 +79,6 @@ static wx_day_t *new_day_ymd(weather_t *w, const char *ymd) {
     return new_day(w, y, m, d);
 }
 
-static void url_enc(char *out, size_t n, const char *s) {
-    size_t k = 0;
-    for (; *s && k + 4 < n; s++) {
-        unsigned char c = *s;
-        if (isalnum(c) || strchr("-_.~,", c)) out[k++] = c;
-        else k += snprintf(out + k, n - k, "%%%02X", c);
-    }
-    out[k] = 0;
-}
 
 /* "45.46,9.19": a place by coordinates */
 static bool latlon(double *lat, double *lon) {
@@ -172,85 +132,6 @@ static wx_kind_t vc_kind(const char *icon, bool *night) {
     return WX_UNKNOWN;
 }
 
-/* ---- HTTPS ---- */
-
-/* the body (in PSRAM, free it), or NULL and err. The URL holds the API key:
-   never log it */
-static char *http_get(const char *url, int *status, char *err, size_t n) {
-    const esp_http_client_config_t c = {
-        .url = url,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = 15000,
-        .buffer_size = 4096,
-        .buffer_size_tx = 2048,   /* Visual Crossing's request line is long */
-        .user_agent = "ArtShow",
-    };
-    esp_http_client_handle_t h = esp_http_client_init(&c);
-    if (!h) {
-        snprintf(err, n, "%s: out of memory", s_cfg.prov->name);
-        return NULL;
-    }
-    char *body = NULL;
-    size_t len = 0, cap = 0;
-    esp_err_t e = esp_http_client_open(h, 0);
-    if (e != ESP_OK) {
-        snprintf(err, n, "Can't reach %s (%s)", s_cfg.prov->name, esp_err_to_name(e));
-        goto out;
-    }
-    esp_http_client_fetch_headers(h);
-    *status = esp_http_client_get_status_code(h);
-    for (;;) {
-        if (cap - len < 2048) {
-            cap = cap ? cap * 2 : 16 * 1024;
-            char *b = cap <= MAX_BODY ? heap_caps_realloc(body, cap, MALLOC_CAP_SPIRAM) : NULL;
-            if (!b) {
-                snprintf(err, n, "%s: the answer is too big", s_cfg.prov->name);
-                free(body);
-                body = NULL;
-                goto out;
-            }
-            body = b;
-        }
-        int r = esp_http_client_read(h, body + len, cap - len - 1);
-        if (r < 0) {
-            snprintf(err, n, "%s: the connection broke", s_cfg.prov->name);
-            free(body);
-            body = NULL;
-            goto out;
-        }
-        if (r == 0) break;
-        len += r;
-    }
-    body[len] = 0;
-out:
-    esp_http_client_close(h);
-    esp_http_client_cleanup(h);
-    return body;
-}
-
-/* the answer as JSON, or NULL and err: the provider's own message if it sent one */
-static cJSON *get_json(const char *url, char *err, size_t n) {
-    int status = 0;
-    char *body = http_get(url, &status, err, n);
-    if (!body) return NULL;
-    cJSON *j = cJSON_Parse(body);
-    if (status != 200) {
-        const char *msg = j ? str(j, "message") : NULL;   /* OpenWeatherMap */
-        if (!msg && j) msg = str(j, "error.message");      /* WeatherAPI */
-        if (!msg && j) msg = str(j, "error");              /* Weatherbit */
-        if (!msg && !j) msg = body;                        /* Visual Crossing: plain text */
-        if (status == 204 && !(msg && *msg)) msg = "no data for this location";
-        snprintf(err, n, "%s: HTTP %d%s%.100s", s_cfg.prov->name, status, msg && *msg ? ": " : "", msg ? msg : "");
-        for (char *p = err; *p; p++) if (*p == '\n' || *p == '\r') *p = ' ';
-        cJSON_Delete(j);
-        j = NULL;
-    } else if (!j) {
-        snprintf(err, n, "%s: the answer isn't JSON", s_cfg.prov->name);
-    }
-    free(body);
-    return j;
-}
-
 #define UNIT(m, i) (s_cfg.imperial ? (i) : (m))   /* metric or imperial */
 
 /* ---- OpenWeatherMap: the free plan's current weather and 5 days in 3-hour steps ---- */
@@ -261,7 +142,7 @@ static void owm_place(char *q, size_t n) {
     if (latlon(&lat, &lon)) {
         snprintf(q, n, "lat=%.4f&lon=%.4f", lat, lon);
     } else {
-        url_enc(e, sizeof e, s_cfg.location);
+        url_enc(e, sizeof e, s_cfg.location, ",");
         snprintf(q, n, "q=%s", e);
     }
 }
@@ -271,30 +152,30 @@ static bool fetch_owm(weather_t *w, char *err, size_t n) {
     owm_place(q, sizeof q);
     snprintf(url, sizeof url, "https://api.openweathermap.org/data/2.5/weather?%s&units=%s&lang=%s&appid=%s",
              q, UNIT("metric", "imperial"), s_cfg.lang, s_cfg.key);
-    cJSON *j = get_json(url, err, n);
+    cJSON *j = net_get_json(url, s_cfg.prov->name, err, n);
     if (!j) return false;
-    copy(w->place, sizeof w->place, str(j, "name"));
-    w->temp = num(j, "main.temp", 0);
-    w->feels = num(j, "main.feels_like", w->temp);
-    w->humidity = num(j, "main.humidity", 0);
-    w->wind = num(j, "wind.speed", 0) * UNIT(3.6, 1);   /* m/s, or mph */
-    set_compass(w, num(j, "wind.deg", -1));
-    set_desc(w, str(j, "weather.0.description"));
-    w->kind = code_kind(num(j, "weather.0.id", 0));
-    const char *icon = str(j, "weather.0.icon");        /* "10n": night */
+    copy(w->place, sizeof w->place, json_str(j, "name"));
+    w->temp = json_num(j, "main.temp", 0);
+    w->feels = json_num(j, "main.feels_like", w->temp);
+    w->humidity = json_num(j, "main.humidity", 0);
+    w->wind = json_num(j, "wind.speed", 0) * UNIT(3.6, 1);   /* m/s, or mph */
+    set_compass(w, json_num(j, "wind.deg", -1));
+    set_desc(w, json_str(j, "weather.0.description"));
+    w->kind = code_kind(json_num(j, "weather.0.id", 0));
+    const char *icon = json_str(j, "weather.0.icon");        /* "10n": night */
     w->night = icon && strchr(icon, 'n');
     cJSON_Delete(j);
 
     snprintf(url, sizeof url, "https://api.openweathermap.org/data/2.5/forecast?%s&units=%s&lang=%s&appid=%s",
              q, UNIT("metric", "imperial"), s_cfg.lang, s_cfg.key);
-    if (!(j = get_json(url, err, n))) return false;
+    if (!(j = net_get_json(url, s_cfg.prov->name, err, n))) return false;
     /* 3-hour steps into days, in the place's own time; a day's sky is the
        one nearest 13:00 */
-    time_t tz = num(j, "city.timezone", 0);
+    time_t tz = json_num(j, "city.timezone", 0);
     int best = 99;
     const cJSON *it;
-    cJSON_ArrayForEach(it, at(j, "list")) {
-        time_t t = (time_t)num(it, "dt", 0) + tz;
+    cJSON_ArrayForEach(it, json_at(j, "list")) {
+        time_t t = (time_t)json_num(it, "dt", 0) + tz;
         struct tm tm;
         gmtime_r(&t, &tm);
         wx_day_t *d = w->ndays ? &w->day[w->ndays - 1] : NULL;
@@ -303,13 +184,13 @@ static bool fetch_owm(weather_t *w, char *err, size_t n) {
             d->pop = 0;
             best = 99;
         }
-        d->tmin = fminf(d->tmin, num(it, "main.temp_min", d->tmin));
-        d->tmax = fmaxf(d->tmax, num(it, "main.temp_max", d->tmax));
-        int pop = num(it, "pop", 0) * 100 + 0.5;
+        d->tmin = fminf(d->tmin, json_num(it, "main.temp_min", d->tmin));
+        d->tmax = fmaxf(d->tmax, json_num(it, "main.temp_max", d->tmax));
+        int pop = json_num(it, "pop", 0) * 100 + 0.5;
         if (pop > d->pop) d->pop = pop;
         if (abs(tm.tm_hour - 13) < best) {
             best = abs(tm.tm_hour - 13);
-            d->kind = code_kind(num(it, "weather.0.id", 0));
+            d->kind = code_kind(json_num(it, "weather.0.id", 0));
         }
     }
     cJSON_Delete(j);
@@ -324,46 +205,46 @@ static bool fetch_owm(weather_t *w, char *err, size_t n) {
 
 static bool fetch_weatherapi(weather_t *w, char *err, size_t n) {
     char q[200], lang[40] = "", url[512];
-    url_enc(q, sizeof q, s_cfg.location);   /* a name, or "lat,lon" */
+    url_enc(q, sizeof q, s_cfg.location, ",");   /* a name, or "lat,lon" */
     if (strcmp(s_cfg.lang, "en")) snprintf(lang, sizeof lang, "&lang=%s", s_cfg.lang);
     /* every hour of each day: ~70 KB, for the hourly strip */
     snprintf(url, sizeof url, "https://api.weatherapi.com/v1/forecast.json?key=%s&q=%s&days=%d&aqi=no&alerts=no%s",
              s_cfg.key, q, WX_DAYS, lang);
-    cJSON *j = get_json(url, err, n);
+    cJSON *j = net_get_json(url, s_cfg.prov->name, err, n);
     if (!j) return false;
-    copy(w->place, sizeof w->place, str(j, "location.name"));
-    w->temp = num(j, UNIT("current.temp_c", "current.temp_f"), 0);
-    w->feels = num(j, UNIT("current.feelslike_c", "current.feelslike_f"), w->temp);
-    w->humidity = num(j, "current.humidity", 0);
-    w->wind = num(j, UNIT("current.wind_kph", "current.wind_mph"), 0);
-    copy(w->wind_dir, sizeof w->wind_dir, str(j, "current.wind_dir"));
-    set_desc(w, str(j, "current.condition.text"));
-    w->kind = weatherapi_kind(num(j, "current.condition.code", 0));
-    w->night = num(j, "current.is_day", 1) == 0;
+    copy(w->place, sizeof w->place, json_str(j, "location.name"));
+    w->temp = json_num(j, UNIT("current.temp_c", "current.temp_f"), 0);
+    w->feels = json_num(j, UNIT("current.feelslike_c", "current.feelslike_f"), w->temp);
+    w->humidity = json_num(j, "current.humidity", 0);
+    w->wind = json_num(j, UNIT("current.wind_kph", "current.wind_mph"), 0);
+    copy(w->wind_dir, sizeof w->wind_dir, json_str(j, "current.wind_dir"));
+    set_desc(w, json_str(j, "current.condition.text"));
+    w->kind = weatherapi_kind(json_num(j, "current.condition.code", 0));
+    w->night = json_num(j, "current.is_day", 1) == 0;
     const cJSON *it;
-    cJSON_ArrayForEach(it, at(j, "forecast.forecastday")) {
-        wx_day_t *d = new_day_ymd(w, str(it, "date"));
+    cJSON_ArrayForEach(it, json_at(j, "forecast.forecastday")) {
+        wx_day_t *d = new_day_ymd(w, json_str(it, "date"));
         if (!d) break;
-        d->tmin = num(it, UNIT("day.mintemp_c", "day.mintemp_f"), 0);
-        d->tmax = num(it, UNIT("day.maxtemp_c", "day.maxtemp_f"), 0);
-        d->pop = fmax(num(it, "day.daily_chance_of_rain", -1), num(it, "day.daily_chance_of_snow", -1));
-        d->kind = weatherapi_kind(num(it, "day.condition.code", 0));
+        d->tmin = json_num(it, UNIT("day.mintemp_c", "day.mintemp_f"), 0);
+        d->tmax = json_num(it, UNIT("day.maxtemp_c", "day.maxtemp_f"), 0);
+        d->pop = fmax(json_num(it, "day.daily_chance_of_rain", -1), json_num(it, "day.daily_chance_of_snow", -1));
+        d->kind = weatherapi_kind(json_num(it, "day.condition.code", 0));
     }
     /* the hours from this one on, across the days */
-    double now = num(j, "location.localtime_epoch", 0);
+    double now = json_num(j, "location.localtime_epoch", 0);
     const cJSON *day, *h;
-    cJSON_ArrayForEach(day, at(j, "forecast.forecastday")) {
-        cJSON_ArrayForEach(h, at(day, "hour")) {
+    cJSON_ArrayForEach(day, json_at(j, "forecast.forecastday")) {
+        cJSON_ArrayForEach(h, json_at(day, "hour")) {
             int hh;
-            const char *t = str(h, "time");   /* "2026-10-20 15:00", local */
-            if (w->nhours == WX_HOURS || num(h, "time_epoch", 0) + 3600 <= now) continue;
+            const char *t = json_str(h, "time");   /* "2026-10-20 15:00", local */
+            if (w->nhours == WX_HOURS || json_num(h, "time_epoch", 0) + 3600 <= now) continue;
             if (!t || sscanf(t, "%*d-%*d-%*d %d", &hh) != 1) continue;
             wx_hour_t *x = &w->hour[w->nhours++];
             x->hour = hh;
-            x->temp = num(h, UNIT("temp_c", "temp_f"), 0);
-            x->pop = fmax(num(h, "chance_of_rain", 0), num(h, "chance_of_snow", 0));
-            x->kind = weatherapi_kind(num(h, "condition.code", 0));
-            x->night = num(h, "is_day", 1) == 0;
+            x->temp = json_num(h, UNIT("temp_c", "temp_f"), 0);
+            x->pop = fmax(json_num(h, "chance_of_rain", 0), json_num(h, "chance_of_snow", 0));
+            x->kind = weatherapi_kind(json_num(h, "condition.code", 0));
+            x->night = json_num(h, "is_day", 1) == 0;
         }
     }
     cJSON_Delete(j);
@@ -379,36 +260,36 @@ static bool fetch_weatherbit(weather_t *w, char *err, size_t n) {
         snprintf(q, sizeof q, "lat=%.4f&lon=%.4f", lat, lon);
     } else {
         char e[200];
-        url_enc(e, sizeof e, s_cfg.location);
+        url_enc(e, sizeof e, s_cfg.location, ",");
         snprintf(q, sizeof q, "city=%s", e);
     }
     snprintf(url, sizeof url, "https://api.weatherbit.io/v2.0/current?%s&units=%s&lang=%s&key=%s",
              q, UNIT("M", "I"), s_cfg.lang, s_cfg.key);
-    cJSON *j = get_json(url, err, n);
+    cJSON *j = net_get_json(url, s_cfg.prov->name, err, n);
     if (!j) return false;
-    copy(w->place, sizeof w->place, str(j, "data.0.city_name"));
-    w->temp = num(j, "data.0.temp", 0);
-    w->feels = num(j, "data.0.app_temp", w->temp);
-    w->humidity = num(j, "data.0.rh", 0);
-    w->wind = num(j, "data.0.wind_spd", 0) * UNIT(3.6, 1);   /* m/s, or mph */
-    copy(w->wind_dir, sizeof w->wind_dir, str(j, "data.0.wind_cdir"));
-    set_desc(w, str(j, "data.0.weather.description"));
-    w->kind = code_kind(num(j, "data.0.weather.code", 0));
-    const char *pod = str(j, "data.0.pod");   /* part of day: "d" or "n" */
+    copy(w->place, sizeof w->place, json_str(j, "data.0.city_name"));
+    w->temp = json_num(j, "data.0.temp", 0);
+    w->feels = json_num(j, "data.0.app_temp", w->temp);
+    w->humidity = json_num(j, "data.0.rh", 0);
+    w->wind = json_num(j, "data.0.wind_spd", 0) * UNIT(3.6, 1);   /* m/s, or mph */
+    copy(w->wind_dir, sizeof w->wind_dir, json_str(j, "data.0.wind_cdir"));
+    set_desc(w, json_str(j, "data.0.weather.description"));
+    w->kind = code_kind(json_num(j, "data.0.weather.code", 0));
+    const char *pod = json_str(j, "data.0.pod");   /* part of day: "d" or "n" */
     w->night = pod && *pod == 'n';
     cJSON_Delete(j);
 
     snprintf(url, sizeof url, "https://api.weatherbit.io/v2.0/forecast/daily?%s&units=%s&lang=%s&days=%d&key=%s",
              q, UNIT("M", "I"), s_cfg.lang, WX_DAYS, s_cfg.key);
-    if (!(j = get_json(url, err, n))) return false;
+    if (!(j = net_get_json(url, s_cfg.prov->name, err, n))) return false;
     const cJSON *it;
-    cJSON_ArrayForEach(it, at(j, "data")) {
-        wx_day_t *d = new_day_ymd(w, str(it, "valid_date"));
+    cJSON_ArrayForEach(it, json_at(j, "data")) {
+        wx_day_t *d = new_day_ymd(w, json_str(it, "valid_date"));
         if (!d) break;
-        d->tmin = num(it, "min_temp", 0);
-        d->tmax = num(it, "max_temp", 0);
-        d->pop = num(it, "pop", -1);
-        d->kind = code_kind(num(it, "weather.code", 0));
+        d->tmin = json_num(it, "min_temp", 0);
+        d->tmax = json_num(it, "max_temp", 0);
+        d->pop = json_num(it, "pop", -1);
+        d->kind = code_kind(json_num(it, "weather.code", 0));
     }
     cJSON_Delete(j);
     return true;
@@ -418,33 +299,33 @@ static bool fetch_weatherbit(weather_t *w, char *err, size_t n) {
 
 static bool fetch_visualcrossing(weather_t *w, char *err, size_t n) {
     char q[200], url[640];
-    url_enc(q, sizeof q, s_cfg.location);   /* a name, or "lat,lon" */
+    url_enc(q, sizeof q, s_cfg.location, ",");   /* a name, or "lat,lon" */
     snprintf(url, sizeof url,
              "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/%s/next%ddays"
              "?unitGroup=%s&include=days,current&iconSet=icons2&lang=%s&contentType=json"
              "&elements=datetime,tempmax,tempmin,temp,feelslike,humidity,windspeed,winddir,precipprob,conditions,icon"
              "&key=%s",
              q, WX_DAYS - 1, UNIT("metric", "us"), s_cfg.lang, s_cfg.key);
-    cJSON *j = get_json(url, err, n);
+    cJSON *j = net_get_json(url, s_cfg.prov->name, err, n);
     if (!j) return false;
-    copy(w->place, sizeof w->place, str(j, "resolvedAddress"));
-    const cJSON *cur = at(j, "currentConditions");
-    if (!cJSON_IsObject(cur)) cur = at(j, "days.0");
-    w->temp = num(cur, "temp", 0);
-    w->feels = num(cur, "feelslike", w->temp);
-    w->humidity = num(cur, "humidity", 0);
-    w->wind = num(cur, "windspeed", 0);   /* km/h, or mph */
-    set_compass(w, num(cur, "winddir", -1));
-    set_desc(w, str(cur, "conditions"));
-    w->kind = vc_kind(str(cur, "icon"), &w->night);
+    copy(w->place, sizeof w->place, json_str(j, "resolvedAddress"));
+    const cJSON *cur = json_at(j, "currentConditions");
+    if (!cJSON_IsObject(cur)) cur = json_at(j, "days.0");
+    w->temp = json_num(cur, "temp", 0);
+    w->feels = json_num(cur, "feelslike", w->temp);
+    w->humidity = json_num(cur, "humidity", 0);
+    w->wind = json_num(cur, "windspeed", 0);   /* km/h, or mph */
+    set_compass(w, json_num(cur, "winddir", -1));
+    set_desc(w, json_str(cur, "conditions"));
+    w->kind = vc_kind(json_str(cur, "icon"), &w->night);
     const cJSON *it;
-    cJSON_ArrayForEach(it, at(j, "days")) {
-        wx_day_t *d = new_day_ymd(w, str(it, "datetime"));
+    cJSON_ArrayForEach(it, json_at(j, "days")) {
+        wx_day_t *d = new_day_ymd(w, json_str(it, "datetime"));
         if (!d) break;
-        d->tmin = num(it, "tempmin", 0);
-        d->tmax = num(it, "tempmax", 0);
-        d->pop = num(it, "precipprob", -1);
-        d->kind = vc_kind(str(it, "icon"), NULL);
+        d->tmin = json_num(it, "tempmin", 0);
+        d->tmax = json_num(it, "tempmax", 0);
+        d->pop = json_num(it, "precipprob", -1);
+        d->kind = vc_kind(json_str(it, "icon"), NULL);
     }
     cJSON_Delete(j);
     return true;
@@ -502,28 +383,28 @@ static void config_parse(const char *text) {
         snprintf(s_cfg.problem, ERR_LEN, "config.json isn't valid JSON, near: %.40s", cJSON_GetErrorPtr());
         return;
     }
-    const cJSON *wx = at(j, "weather");
+    const cJSON *wx = json_at(j, "weather");
     if (!cJSON_IsObject(wx)) {
         snprintf(s_cfg.problem, ERR_LEN, "config.json has no \"weather\" section");
         cJSON_Delete(j);
         return;
     }
-    const char *id = str(wx, "provider");
+    const char *id = json_str(wx, "provider");
     int want = -1;
     for (int k = 0; k < NPROV; k++) {
         char path[48];
         snprintf(path, sizeof path, "api_keys.%s", s_providers[k].id);
-        copy(s_cfg.keys[k], sizeof s_cfg.keys[k], str(wx, path));
+        copy(s_cfg.keys[k], sizeof s_cfg.keys[k], json_str(wx, path));
         if (s_cfg.keys[k][0]) s_keyed[s_nkeyed++] = k;
         if (id && !strcasecmp(id, s_providers[k].id)) want = k;
     }
-    copy(s_cfg.location, sizeof s_cfg.location, str(wx, "location"));
-    copy(s_cfg.place, sizeof s_cfg.place, str(wx, "place_name"));
-    const char *lang = str(wx, "lang");
-    url_enc(s_cfg.lang, sizeof s_cfg.lang, lang && *lang ? lang : "en");
-    const char *units = str(wx, "units");
+    copy(s_cfg.location, sizeof s_cfg.location, json_str(wx, "location"));
+    copy(s_cfg.place, sizeof s_cfg.place, json_str(wx, "place_name"));
+    const char *lang = json_str(wx, "lang");
+    url_enc(s_cfg.lang, sizeof s_cfg.lang, lang && *lang ? lang : "en", ",");
+    const char *units = json_str(wx, "units");
     s_cfg.imperial = units && !strcasecmp(units, "imperial");
-    s_cfg.refresh_min = num(wx, "refresh_minutes", 30);
+    s_cfg.refresh_min = json_num(wx, "refresh_minutes", 30);
     cJSON_Delete(j);
 
     /* the one picked on the page, else config.json's, else the first with a key */
@@ -545,12 +426,7 @@ static void config_parse(const char *text) {
 }
 
 
-/* cJSON's nodes in PSRAM: WeatherAPI's hourly answer parses into ~3000 small
-   allocations, which would otherwise take ~200 KB of internal RAM */
-static void *psram_malloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
-
 void weather_config_load(bool card) {
-    cJSON_InitHooks(&(cJSON_Hooks){ .malloc_fn = psram_malloc, .free_fn = free });
     if (!card) {
         snprintf(s_cfg.problem, ERR_LEN, "No microSD card: the weather's settings are in config.json on it");
         return;
