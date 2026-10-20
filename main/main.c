@@ -1,11 +1,14 @@
 /* main.c - ArtShow: the pictures on the microSD card as a full-screen
- * slideshow, with the Wi-Fi button (bottom right) and the brightness slider
- * (bottom left) over it. */
+ * slideshow, with the menu (top left: the slideshow, a clock page), the Wi-Fi
+ * button (bottom right) and the brightness slider (bottom left) over it. */
 #include "board.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include "slideshow.h"
 #include "brightness_ui.h"
+#include "clock_page.h"
+#include "menu.h"
+#include "time_sync.h"
 #include "nvs_flash.h"
 #include "wifi.h"
 #include "audio.h"
@@ -14,6 +17,9 @@ static const char *TAG = "app";
 
 /* the brightness is kept in NVS, read before Wi-Fi starts (wifi_start inits it
    again: harmless) */
+/* the menu's slideshow page is the screen itself: hidden means paused */
+static void slideshow_shown(bool shown) { slideshow_pause(!shown); }
+
 static void nvs_init(void) {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -29,12 +35,20 @@ void app_main(void) {
     slideshow_mount();         /* before wifi_start: see slideshow.h */
     nvs_init();
     if (lvgl_port_lock(0)) {   /* every LVGL call from outside the LVGL task holds the lock */
-        slideshow_start(lv_screen_active());
-        wifi_ui_create(lv_screen_active());   /* after the slideshow: the corner buttons stay on top */
-        brightness_ui_create(lv_screen_active());
+        lv_obj_t *scr = lv_screen_active();
+        slideshow_start(scr);
+        lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
+        wifi_ui_create(scr);
+        brightness_ui_create(scr);
+        const menu_page_t pages[] = {
+            { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown },
+            { LV_SYMBOL_BELL "  Clock", clock, clock_page_shown },
+        };
+        menu_create(scr, pages, sizeof pages / sizeof pages[0]);
         lvgl_port_unlock();
     }
     audio_init();
     audio_beep(880, 150);
     wifi_start();
+    time_sync_start();         /* after wifi_start: it inits esp_netif */
 }

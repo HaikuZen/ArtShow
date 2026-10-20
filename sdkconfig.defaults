@@ -11,7 +11,8 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_SPEED_200M=y
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 # console on UART0 (GPIO 37/38) = the board's CH340, the "UART" USB socket
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
@@ -22,6 +23,12 @@ CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
+# the clock page's digital time
+CONFIG_LV_FONT_MONTSERRAT_48=y
+CONFIG_LV_CALENDAR_WEEK_STARTS_MONDAY=y
+# LVGL from the system heap, not a fixed 64 KB pool: the Wi-Fi panel, the
+# clock page and its calendar don't all fit in that
+CONFIG_LV_USE_CLIB_MALLOC=y
 # the P4's PPA draws LVGL's fills and plain images (the slideshow's picture is
 # one): a full-screen image copy by the CPU is ~40 ms, too slow for transitions
 CONFIG_LV_USE_PPA=y

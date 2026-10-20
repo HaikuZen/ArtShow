@@ -11,7 +11,10 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi), NVS, then the slideshow, the Wi-Fi button and the brightness slider built under the LVGL lock |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi), NVS, then (under the LVGL lock) the slideshow, the clock page, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi and NTP |
+| `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
+| `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) |
+| `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
 | `main/slideshow.c/.h` | the microSD picture slideshow: see Slideshow below |
 | `main/transition.c/.h` | the change from one picture to the next: see Slideshow below |
 | `main/brightness_ui.c/.h` | the backlight: a button bottom left opens a slider (folds away after 5 s untouched); the level is kept in NVS (`artshow`/`bright`) |
@@ -19,6 +22,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/board_pins.h` | every pin and panel value, proven on the bench board. Don't change them without a reason from the hardware |
 | `main/idf_component.yml` | the component dependencies. It must stay in `main/`: a manifest at the project root is silently ignored |
 | `sdkconfig.defaults` | the committed config. `sdkconfig` is generated and gitignored |
+| `partitions.csv` | NVS at 0x9000 (as in IDF's single-app-large table), the app at 4 MB |
 | `main/wifi.c/.h`, `main/wifi_ui.c`, `main/Kconfig.projbuild` | Wi-Fi through the C6: see Wi-Fi below |
 | `main/audio.c/.h` | the speaker: see Audio below |
 | `main/Kconfig.projbuild` | also `idf.py menuconfig` > ArtShow slideshow: seconds per picture, transition length, varied transitions, shuffle, fill (crop) |
@@ -146,8 +150,8 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   20 ms timer in the LVGL task blends the blocks the front has reached from a
   snapshot of the old picture to the new (RGB565, 33 alpha steps; a block row's
   alphas first, then each pixel row streamed), and invalidates one area per
-  20 px band (30 areas: LVGL keeps 32). Not LVGL objects per tile: LVGL's heap
-  is 64 KB. New effect: a map function and a row in `s_fx`. Speed is PSRAM
+  20 px band (30 areas: LVGL keeps 32). Not LVGL objects per tile: hundreds of
+  objects per change. New effect: a map function and a row in `s_fx`. Speed is PSRAM
   bandwidth (the panel's scan-out, LVGL's two framebuffers and three screen
   buffers share it): per frame ~18 ms blend + ~25 ms LVGL, 17-22 fps. The
   PPA draws the picture into the framebuffer (`CONFIG_LV_USE_PPA`, `_IMG`;
@@ -160,6 +164,9 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   framebuffers, the off-screen one lags until the next refresh (LVGL syncs it
   then): comparing it with the picture after a transition shows differences,
   and that's fine. `menuconfig` > ArtShow: the length (1000 ms), and dissolve-only.
+- The slideshow is the menu's first page: the screen itself. Another page
+  covers it and `slideshow_pause()` holds the next picture back (it still
+  loads); back on the slideshow, it shows at once.
 - The slideshow task runs at idle priority: a software decode doesn't yield for
   5-9 s, and at any higher priority core 1's idle task starves (task watchdog).
 - Two decoders. The P4's JPEG engine when the full-size picture fits in
@@ -171,3 +178,18 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   EXIF rotation is ignored.
 - File names: `CONFIG_FATFS_API_ENCODING_UTF_8` (accented names, not 8.3 ones).
 - The SD clock is 20 MHz (`SD_FREQ_KHZ`); Elecrow's lesson uses 10 MHz if a card is flaky.
+
+## Clock
+
+- `main/time_sync.c`: `setenv("TZ")` from menuconfig > ArtShow clock (default
+  `CET-1CEST,M3.5.0,M10.5.0/3`, Italy) and esp_netif's SNTP with the server
+  there (`pool.ntp.org`). SNTP starts in `app_main` after `wifi_start` (which
+  inits esp_netif) and again on each `IP_EVENT_STA_GOT_IP`: its first tries
+  fail before there's an IP and it then waits long to retry (27 s, measured);
+  restarted, the time comes ~3 s after the IP. It re-syncs every hour.
+- `main/clock_page.c`: until the first sync the time reads `--:--:--` and the
+  calendar is hidden (the clock says 1970). A 200 ms LVGL timer moves the
+  hands, only while the page is shown; a new day resets the calendar to the
+  current month (its arrows show others meanwhile).
+- LVGL takes its memory from the system heap (`CONFIG_LV_USE_CLIB_MALLOC`), not
+  a 64 KB pool: drawing the clock page takes ~125 KB of internal RAM for a moment.

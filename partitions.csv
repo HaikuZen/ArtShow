@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,   Size
+# the "single app large" layout (NVS where it was: the saved Wi-Fi network and
+# brightness survive), with the app at 4 MB of the 16 MB flash
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0x400000,

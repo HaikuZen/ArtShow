@@ -12,3 +12,6 @@
 bool slideshow_mount(void);
 /* build the screen and start the slideshow's task; call holding the LVGL lock */
 void slideshow_start(lv_obj_t *parent);
+/* hold the next picture back while another page covers the slideshow (the
+ * next one still loads); resumed, it shows at once */
+void slideshow_pause(bool pause);

@@ -46,6 +46,7 @@ static lv_obj_t *s_view, *s_msg;
 static lv_image_dsc_t s_dsc;
 static uint16_t *s_out;            /* screen-sized RGB565: on show (transition.c draws into it) */
 static uint16_t *s_next;           /* screen-sized RGB565: the next picture, loaded ahead */
+static volatile bool s_paused;     /* another page covers the slideshow */
 static TaskHandle_t s_task;
 static sdmmc_card_t *s_card;
 static jpeg_decoder_handle_t s_jpeg;
@@ -458,6 +459,7 @@ static void slideshow_task(void *arg) {
         if (!ready && !prepare(&next, dir))   /* none loads: the card is gone, or all unreadable */
             stop(LV_SYMBOL_WARNING "  None of the pictures can be shown (baseline JPEGs only)\n"
                  "Check the card, then tap the screen");
+        while (s_paused) wait_note(500, false);
         show();
         int cur = next;
         int64_t due = esp_timer_get_time() + CONFIG_ARTSHOW_INTERVAL_S * 1000000LL;
@@ -481,6 +483,8 @@ static void slideshow_task(void *arg) {
         }
     }
 }
+
+void slideshow_pause(bool pause) { s_paused = pause; }
 
 void slideshow_start(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(parent, lv_color_black(), 0);
