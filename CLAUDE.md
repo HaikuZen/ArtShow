@@ -11,13 +11,14 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the clock, weather and artwork pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the clock, weather, sun and moon, and artwork pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
 | `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
+| `main/sun_moon.c/.h`, `main/astro.c/.h` | the Sun and Moon page, and the astronomy under it: see Sun and Moon below |
 | `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
 | `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file; redirects followed; a connection kept for a run of calls to one server), JSON path helpers, cJSON in PSRAM |
 | `main/fonts/` | Montserrat 16/20/24/32 with Latin-1, Latin Extended-A and typographic punctuation (`art_font_*`): the museum's names. LVGL's built-in fonts are ASCII only |
@@ -303,3 +304,26 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 - A TLS connection to Wikimedia costs ~2 s (ECDSA in software on rev v1.x):
   a lookup keeps one open for its calls (`net_keep_t`): 0.3-0.9 s each after
   the first. A lookup is ~4-6 s.
+
+## Sun and Moon
+
+- `main/astro.c`: plain C (it builds on a computer too): Paul Schlyter's
+  low-precision sun and moon (orbital elements, the moon's main
+  perturbations), sidereal time, altitude. Rise and set: the altitude every
+  10 minutes, each crossing refined by bisection (sun -0.833 degrees; golden
+  hours -4 to +6; the moon: parallax less refraction and radius). The next
+  full/new moon and solstice/equinox: the elongation or the sun's longitude
+  crossing its target. Checked against PyEphem for Milan over a year: the
+  sun's times within 6 s, the moon's rise/set within 47 s, its lit fraction
+  within 0.4 points, the next phases within 9 min, the seasons within 7 min.
+  Polar day and night (no rise, no set) and the southern hemisphere work.
+- The place: `weather_place()`: config.json's "lat,lon", else the
+  coordinates the weather provider last gave (all four do), kept in NVS
+  (`artshow`/`wxlat`, `wxlon`, `wxplace`, micro-degrees): offline after one
+  fetch, without a card even.
+- `main/sun_moon.c`: the day's numbers when shown on a new day (or a new
+  place): ~0.56 s in the LVGL task (doubles in software: the P4's FPU is
+  single precision); each minute only the sun's dot and the moon's phase
+  (`astro_moon_phase`). The moon is drawn row by row: the lit part from the
+  limb to the terminator (x = (1 - 2 * lit) * half-width), right side when
+  waxing in the northern hemisphere, mirrored in the southern.

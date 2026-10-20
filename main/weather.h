@@ -3,6 +3,7 @@
  * Weatherbit, Visual Crossing), set in config.json on the microSD card. A task
  * fetches it over HTTPS and refreshes it every few minutes */
 #include <stdbool.h>
+#include <stddef.h>
 
 #define WX_DAYS 7
 #define WX_HOURS 24
@@ -28,6 +29,7 @@ typedef struct {
     const char *provider;          /* its name, for the screen */
     bool imperial;                 /* °F and mph, else °C and km/h */
     char place[64];
+    double lat, lon;               /* the place's, from the provider; NAN if not given */
     char desc[64];                 /* now: "Scattered clouds" */
     wx_kind_t kind;
     bool night;
@@ -57,3 +59,7 @@ void weather_refresh(void);
 int weather_providers(const char **names, int *current);
 /* switch to names[k] of weather_providers (kept for the next boot) and fetch now */
 void weather_use_provider(int k);
+/* the place's coordinates (degrees) and name: config.json's "lat,lon", else
+ * the last ones a provider gave (kept in NVS: they're there offline too);
+ * false if none yet. Any task */
+bool weather_place(double *lat, double *lon, char *name, size_t n);

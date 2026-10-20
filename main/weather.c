@@ -44,6 +44,9 @@ static struct {
     char problem[ERR_LEN];    /* why there's no forecast: shown on the page */
 } s_cfg;
 static int s_keyed[NPROV], s_nkeyed;   /* the providers with a key */
+static portMUX_TYPE s_place_lock = portMUX_INITIALIZER_UNLOCKED;
+static double s_lat = NAN, s_lon = NAN;  /* the place: weather_place() */
+static char s_place_name[64];
 static volatile int s_want = -1;       /* picked on the page, for the task to switch to */
 
 static weather_cb_t s_cb;
@@ -155,6 +158,8 @@ static bool fetch_owm(weather_t *w, char *err, size_t n) {
     cJSON *j = net_get_json(url, s_cfg.prov->name, err, n);
     if (!j) return false;
     copy(w->place, sizeof w->place, json_str(j, "name"));
+    w->lat = json_num(j, "coord.lat", NAN);
+    w->lon = json_num(j, "coord.lon", NAN);
     w->temp = json_num(j, "main.temp", 0);
     w->feels = json_num(j, "main.feels_like", w->temp);
     w->humidity = json_num(j, "main.humidity", 0);
@@ -213,6 +218,8 @@ static bool fetch_weatherapi(weather_t *w, char *err, size_t n) {
     cJSON *j = net_get_json(url, s_cfg.prov->name, err, n);
     if (!j) return false;
     copy(w->place, sizeof w->place, json_str(j, "location.name"));
+    w->lat = json_num(j, "location.lat", NAN);
+    w->lon = json_num(j, "location.lon", NAN);
     w->temp = json_num(j, UNIT("current.temp_c", "current.temp_f"), 0);
     w->feels = json_num(j, UNIT("current.feelslike_c", "current.feelslike_f"), w->temp);
     w->humidity = json_num(j, "current.humidity", 0);
@@ -268,6 +275,8 @@ static bool fetch_weatherbit(weather_t *w, char *err, size_t n) {
     cJSON *j = net_get_json(url, s_cfg.prov->name, err, n);
     if (!j) return false;
     copy(w->place, sizeof w->place, json_str(j, "data.0.city_name"));
+    w->lat = json_num(j, "data.0.lat", NAN);
+    w->lon = json_num(j, "data.0.lon", NAN);
     w->temp = json_num(j, "data.0.temp", 0);
     w->feels = json_num(j, "data.0.app_temp", w->temp);
     w->humidity = json_num(j, "data.0.rh", 0);
@@ -309,6 +318,8 @@ static bool fetch_visualcrossing(weather_t *w, char *err, size_t n) {
     cJSON *j = net_get_json(url, s_cfg.prov->name, err, n);
     if (!j) return false;
     copy(w->place, sizeof w->place, json_str(j, "resolvedAddress"));
+    w->lat = json_num(j, "latitude", NAN);
+    w->lon = json_num(j, "longitude", NAN);
     const cJSON *cur = json_at(j, "currentConditions");
     if (!cJSON_IsObject(cur)) cur = json_at(j, "days.0");
     w->temp = json_num(cur, "temp", 0);
@@ -426,7 +437,7 @@ static void config_parse(const char *text) {
 }
 
 
-void weather_config_load(bool card) {
+static void config_load(bool card) {
     if (!card) {
         snprintf(s_cfg.problem, ERR_LEN, "No microSD card: the weather's settings are in config.json on it");
         return;
@@ -452,6 +463,64 @@ void weather_config_load(bool card) {
 }
 
 /* ---- the task ---- */
+
+/* the place: in NVS (as micro-degrees) when it moved more than ~100 m */
+#define NVS_LAT   "wxlat"
+#define NVS_LON   "wxlon"
+#define NVS_PLACE "wxplace"
+
+static void set_place(double lat, double lon, const char *name) {
+    taskENTER_CRITICAL(&s_place_lock);
+    s_lat = lat;
+    s_lon = lon;
+    copy(s_place_name, sizeof s_place_name, name);
+    taskEXIT_CRITICAL(&s_place_lock);
+}
+
+static void remember_place(const weather_t *w) {
+    if (isnan(w->lat) || isnan(w->lon)) return;
+    double lat, lon;
+    char name[64];
+    bool had = weather_place(&lat, &lon, name, sizeof name);
+    if (had && fabs(lat - w->lat) < 0.001 && fabs(lon - w->lon) < 0.001 && !strcmp(name, w->place)) return;
+    set_place(w->lat, w->lon, w->place);
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_i32(h, NVS_LAT, (int32_t)lround(w->lat * 1e6));
+    nvs_set_i32(h, NVS_LON, (int32_t)lround(w->lon * 1e6));
+    nvs_set_str(h, NVS_PLACE, w->place);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "the place: %.4f, %.4f (%s)", w->lat, w->lon, w->place);
+}
+
+/* at boot: config.json's "lat,lon", else the last one kept */
+static void load_place(void) {
+    double lat, lon;
+    if (s_cfg.location[0] && latlon(&lat, &lon)) {
+        set_place(lat, lon, s_cfg.place[0] ? s_cfg.place : s_cfg.location);
+        return;
+    }
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
+    int32_t la, lo;
+    char name[64] = "";
+    size_t n = sizeof name;
+    if (nvs_get_i32(h, NVS_LAT, &la) == ESP_OK && nvs_get_i32(h, NVS_LON, &lo) == ESP_OK) {
+        nvs_get_str(h, NVS_PLACE, name, &n);
+        set_place(la / 1e6, lo / 1e6, name);
+    }
+    nvs_close(h);
+}
+
+bool weather_place(double *lat, double *lon, char *name, size_t n) {
+    taskENTER_CRITICAL(&s_place_lock);
+    *lat = s_lat;
+    *lon = s_lon;
+    if (name) copy(name, n, s_place_name);
+    taskEXIT_CRITICAL(&s_place_lock);
+    return !isnan(*lat) && !isnan(*lon);
+}
 
 static void weather_task(void *arg) {
     if (s_cfg.problem[0]) {   /* nothing to fetch until the card is fixed */
@@ -486,6 +555,7 @@ static void weather_task(void *arg) {
         int wait = (s_cfg.refresh_min > s_cfg.prov->min_refresh ? s_cfg.refresh_min : s_cfg.prov->min_refresh) * 60;
         if (s_cfg.prov->fetch(&w, err, sizeof err)) {
             if (s_cfg.place[0]) copy(w.place, sizeof w.place, s_cfg.place);
+            remember_place(&w);
             ESP_LOGI(TAG, "%s: %.1f, %s, %d days", w.place, w.temp, w.desc, w.ndays);
             s_cb(&w, NULL);
             backoff = 0;
@@ -523,4 +593,9 @@ void weather_use_provider(int k) {
     if (k < 0 || k >= s_nkeyed) return;
     s_want = s_keyed[k];
     weather_refresh();
+}
+
+void weather_config_load(bool card) {
+    config_load(card);
+    load_place();   /* even without a card: the last place is in NVS */
 }

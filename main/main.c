@@ -1,6 +1,6 @@
 /* main.c - ArtShow: the pictures on the microSD card as a full-screen
  * slideshow, with the menu (top left: the slideshow, a clock page, the
- * weather, the artwork of the day), "?" (top right: what's on show), the Wi-Fi
+ * weather, the sun and moon, the artwork of the day), "?" (top right: what's on show), the Wi-Fi
  * button (bottom right) and the brightness slider (bottom left) over it. */
 #include "board.h"
 #include "esp_lvgl_port.h"
@@ -13,6 +13,7 @@
 #include "artwork.h"
 #include "artwork_page.h"
 #include "now_showing.h"
+#include "sun_moon.h"
 #include "net.h"
 #include "menu.h"
 #include "time_sync.h"
@@ -53,6 +54,7 @@ void app_main(void) {
         now_showing_create(scr);                    /* over the slideshow: its "?" button, top right */
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
         lv_obj_t *weather = weather_page_create(scr);
+        lv_obj_t *sky = sun_moon_create(scr);
         lv_obj_t *artwork = artwork_page_create(scr);
         wifi_ui_create(scr);
         brightness_ui_create(scr);
@@ -60,6 +62,7 @@ void app_main(void) {
             { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown },
             { LV_SYMBOL_BELL "  Clock", clock, clock_page_shown },
             { LV_SYMBOL_CHARGE "  Weather", weather, NULL },
+            { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_shown },
             { LV_SYMBOL_EYE_OPEN "  Artwork of the Day", artwork, NULL },
         };
         menu_create(scr, pages, sizeof pages / sizeof pages[0]);
