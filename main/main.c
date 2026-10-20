@@ -1,6 +1,6 @@
 /* main.c - ArtShow: the pictures on the microSD card as a full-screen
  * slideshow, with the menu (top left: the slideshow, a clock page, the
- * weather, the artwork of the day), the Wi-Fi
+ * weather, the artwork of the day), "?" (top right: what's on show), the Wi-Fi
  * button (bottom right) and the brightness slider (bottom left) over it. */
 #include "board.h"
 #include "esp_lvgl_port.h"
@@ -12,6 +12,7 @@
 #include "weather_page.h"
 #include "artwork.h"
 #include "artwork_page.h"
+#include "now_showing.h"
 #include "net.h"
 #include "menu.h"
 #include "time_sync.h"
@@ -23,8 +24,12 @@ static const char *TAG = "app";
 
 /* the brightness is kept in NVS, read before Wi-Fi starts (wifi_start inits it
    again: harmless) */
-/* the menu's slideshow page is the screen itself: hidden means paused */
-static void slideshow_shown(bool shown) { slideshow_pause(!shown); }
+/* the menu's slideshow page is the screen itself: hidden means paused (and
+   its "?" button, Now Showing, goes with it) */
+static void slideshow_shown(bool shown) {
+    slideshow_pause(!shown);
+    now_showing_slideshow(shown);
+}
 
 static void nvs_init(void) {
     esp_err_t err = nvs_flash_init();
@@ -45,6 +50,7 @@ void app_main(void) {
     if (lvgl_port_lock(0)) {   /* every LVGL call from outside the LVGL task holds the lock */
         lv_obj_t *scr = lv_screen_active();
         slideshow_start(scr);
+        now_showing_create(scr);                    /* over the slideshow: its "?" button, top right */
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
         lv_obj_t *weather = weather_page_create(scr);
         lv_obj_t *artwork = artwork_page_create(scr);

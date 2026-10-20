@@ -15,3 +15,8 @@ void slideshow_start(lv_obj_t *parent);
 /* hold the next picture back while another page covers the slideshow (the
  * next one still loads); resumed, it shows at once */
 void slideshow_pause(bool pause);
+/* the file of the picture on show (its full path); false: none yet */
+bool slideshow_now(char *path, size_t n);
+/* what the slideshow shows: 1024x600 RGB565, rows of 1024 pixels; NULL before
+ * it starts. Read it in the LVGL task, after transition_finish() */
+const uint16_t *slideshow_screen(void);

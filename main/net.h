@@ -3,6 +3,7 @@
  * (weather, artwork). Call from a task with ~12 KB of stack, never from LVGL's */
 #include <stddef.h>
 #include "cJSON.h"
+#include "esp_http_client.h"
 
 /* cJSON's nodes in PSRAM; call once at boot, before any parse */
 void net_init(void);
@@ -18,6 +19,15 @@ size_t net_download(const char *url, const char *who, const char *path, net_prog
 /* GET and parse JSON (up to 256 KB); not 200: NULL, and err holds the
  * server's own message when it sent one */
 cJSON *net_get_json(const char *url, const char *who, char *err, size_t n);
+
+/* a connection kept open between GETs to one server: a new TLS connection
+ * costs ~2 s (Wikipedia's). Zero it first; a GET to another server replaces it */
+typedef struct {
+    esp_http_client_handle_t h;
+    char host[64];
+} net_keep_t;
+cJSON *net_keep_get_json(net_keep_t *k, const char *url, const char *who, char *err, size_t n);
+void net_keep_close(net_keep_t *k);
 
 /* a dotted path into JSON: "weather.0.id" (a number indexes an array) */
 const cJSON *json_at(const cJSON *o, const char *path);

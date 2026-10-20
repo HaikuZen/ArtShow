@@ -11,14 +11,15 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, the clock, weather and artwork pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the clock, weather and artwork pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
 | `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
-| `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file), JSON path helpers, cJSON in PSRAM |
+| `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
+| `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file; redirects followed; a connection kept for a run of calls to one server), JSON path helpers, cJSON in PSRAM |
 | `main/fonts/` | Montserrat 16/20/24/32 with Latin-1, Latin Extended-A and typographic punctuation (`art_font_*`): the museum's names. LVGL's built-in fonts are ASCII only |
 | `main/slideshow.c/.h` | the microSD picture slideshow: see Slideshow below |
 | `main/transition.c/.h` | the change from one picture to the next: see Slideshow below |
@@ -169,7 +170,8 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   framebuffers, the off-screen one lags until the next refresh (LVGL syncs it
   then): comparing it with the picture after a transition shows differences,
   and that's fine. `menuconfig` > ArtShow: the length (1000 ms), and dissolve-only.
-- The slideshow is the menu's first page: the screen itself. Another page
+- The slideshow is the menu's first page: the screen itself; its "?" button
+  (Now Showing) only shows on it. Another page
   covers it and `slideshow_pause()` holds the next picture back (it still
   loads); back on the slideshow, it shows at once.
 - The slideshow task runs at idle priority: a software decode doesn't yield for
@@ -275,3 +277,29 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   fell to 91 KB free. `CONFIG_MBEDTLS_HARDWARE_ECDSA_VERIFY` is off: a rev v1.x
   P4 has no ECDSA peripheral (each connection logged an error, then verified in
   software anyway).
+
+## Now Showing
+
+- Not in the menu: a "?" button top right of the slideshow (only there:
+  `main.c`'s `slideshow_shown` tells it) opens the page over the slideshow,
+  and turns into an X that closes it. Another menu page closes it too.
+- `main/now_showing.c`: the page takes the slideshow's picture on show
+  (`slideshow_now()`: its path; `slideshow_screen()`: the 1024x600 buffer,
+  box-filtered to 480x281 after `transition_finish()`), and the slideshow is
+  paused under it. Title and artist come from the file name, "Artist -
+  Title.jpg" (DailyArt's: Italian titles, ':' written '_').
+- The lookup, in its own task: a search on `CONFIG_ARTSHOW_WIKI_LANG`'s
+  Wikipedia (menuconfig > ArtShow now showing; "it") for "title artist"; the
+  top hit counts if its short description says painting (dipinto, xilografia,
+  ...) and names the artist, and isn't the artist's own page. Else the
+  artist's page by name (a search if there's no page by that exact name:
+  "James Dixon Innes" is "James Dickson Innes"), there and then on English
+  Wikipedia. Measured on the card's pictures: the painting is rarely there
+  (the titles are DailyArt's translations); the artist nearly always.
+- Wikipedia rate-limits its search API hard (HTTP 429, for minutes, after a
+  burst from one address: the board shares it with the computer). So: one
+  search per lookup at most, page summaries by title (cached by Wikimedia,
+  generous), the last 16 answers kept, and 429 says "busy, try again".
+- A TLS connection to Wikimedia costs ~2 s (ECDSA in software on rev v1.x):
+  a lookup keeps one open for its calls (`net_keep_t`): 0.3-0.9 s each after
+  the first. A lookup is ~4-6 s.

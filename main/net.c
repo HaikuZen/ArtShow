@@ -16,7 +16,25 @@ static void *psram_malloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIR
 
 void net_init(void) { cJSON_InitHooks(&(cJSON_Hooks){ .malloc_fn = psram_malloc, .free_fn = free }); }
 
-char *net_get(const char *url, const char *who, size_t max, int *status, size_t *len, char *err, size_t n) {
+/* open the request and read the headers, following up to 3 redirects
+   (Wikipedia answers a renamed page with one) */
+static bool open_following(esp_http_client_handle_t h, const char *who, int *status, char *err, size_t n) {
+    for (int k = 0;; k++) {
+        esp_err_t e = esp_http_client_open(h, 0);
+        if (e != ESP_OK) {
+            snprintf(err, n, "Can't reach %s (%s)", who, esp_err_to_name(e));
+            return false;
+        }
+        esp_http_client_fetch_headers(h);
+        *status = esp_http_client_get_status_code(h);
+        if (k == 3 || (*status != 301 && *status != 302 && *status != 307 && *status != 308)) return true;
+        esp_http_client_flush_response(h, NULL);
+        esp_http_client_set_redirection(h);   /* the Location: the next open goes there */
+        esp_http_client_close(h);
+    }
+}
+
+static esp_http_client_handle_t client(const char *url) {
     const esp_http_client_config_t c = {
         .url = url,
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -25,28 +43,54 @@ char *net_get(const char *url, const char *who, size_t max, int *status, size_t 
         .buffer_size_tx = 2048,   /* Visual Crossing's request line is long */
         .user_agent = "ArtShow/1.0 (ESP32-P4 picture frame)",   /* Wikimedia asks for a telling one */
     };
-    esp_http_client_handle_t h = esp_http_client_init(&c);
-    if (!h) {
-        snprintf(err, n, "%s: out of memory", who);
-        return NULL;
+    return esp_http_client_init(&c);
+}
+
+/* "https://it.wikipedia.org/w/..." -> "it.wikipedia.org" */
+static void host_of(const char *url, char *host, size_t n) {
+    const char *p = strstr(url, "://");
+    p = p ? p + 3 : url;
+    snprintf(host, n, "%.*s", (int)strcspn(p, "/?#"), p);
+}
+
+void net_keep_close(net_keep_t *k) {
+    if (!k->h) return;
+    esp_http_client_close(k->h);
+    esp_http_client_cleanup(k->h);
+    k->h = NULL;
+    k->host[0] = 0;
+}
+
+/* GET with keep (may be NULL): its connection when it's to the same server */
+static char *get(net_keep_t *k, const char *url, const char *who, size_t max, int *status, size_t *len, char *err, size_t n) {
+    char host[64];
+    host_of(url, host, sizeof host);
+    esp_http_client_handle_t h;
+    bool reused = k && k->h && !strcmp(k->host, host);
+    if (reused) {
+        h = k->h;
+        esp_http_client_set_url(h, url);
+    } else {
+        if (k) net_keep_close(k);
+        if (!(h = client(url))) {
+            snprintf(err, n, "%s: out of memory", who);
+            return NULL;
+        }
+        if (k) {
+            k->h = h;
+            snprintf(k->host, sizeof k->host, "%s", host);
+        }
     }
     char *body = NULL;
     size_t got = 0, cap = 0;
-    esp_err_t e = esp_http_client_open(h, 0);
-    if (e != ESP_OK) {
-        snprintf(err, n, "Can't reach %s (%s)", who, esp_err_to_name(e));
-        goto out;
-    }
-    esp_http_client_fetch_headers(h);
-    *status = esp_http_client_get_status_code(h);
+    bool ok = false;
+    if (!open_following(h, who, status, err, n)) goto out;
     for (;;) {
         if (cap - got < 2048) {
             cap = cap ? cap * 2 : 16 * 1024;
             char *b = cap <= max * 2 ? heap_caps_realloc(body, cap, MALLOC_CAP_SPIRAM) : NULL;
             if (!b) {
                 snprintf(err, n, "%s: the answer is too big", who);
-                free(body);
-                body = NULL;
                 goto out;
             }
             body = b;
@@ -54,25 +98,35 @@ char *net_get(const char *url, const char *who, size_t max, int *status, size_t 
         int r = esp_http_client_read(h, body + got, cap - got - 1);
         if (r < 0) {
             snprintf(err, n, "%s: the connection broke", who);
-            free(body);
-            body = NULL;
             goto out;
         }
         if (r == 0) break;
         got += r;
         if (got > max) {
             snprintf(err, n, "%s: the answer is too big", who);
-            free(body);
-            body = NULL;
             goto out;
         }
     }
     body[got] = 0;
     if (len) *len = got;
+    ok = true;
 out:
-    esp_http_client_close(h);
-    esp_http_client_cleanup(h);
+    if (!ok) {
+        free(body);
+        body = NULL;
+    }
+    if (!k) {
+        esp_http_client_close(h);
+        esp_http_client_cleanup(h);
+    } else if (!ok) {
+        net_keep_close(k);
+        if (reused) return get(k, url, who, max, status, len, err, n);   /* the server let it go: once more, anew */
+    }
     return body;
+}
+
+char *net_get(const char *url, const char *who, size_t max, int *status, size_t *len, char *err, size_t n) {
+    return get(NULL, url, who, max, status, len, err, n);
 }
 
 size_t net_download(const char *url, const char *who, const char *path, net_progress_t progress, char *err, size_t n) {
@@ -92,13 +146,8 @@ size_t net_download(const char *url, const char *who, const char *path, net_prog
         snprintf(err, n, "%s: out of memory", who);
         goto out;
     }
-    esp_err_t e = esp_http_client_open(h, 0);
-    if (e != ESP_OK) {
-        snprintf(err, n, "Can't reach %s (%s)", who, esp_err_to_name(e));
-        goto out;
-    }
-    esp_http_client_fetch_headers(h);
-    int status = esp_http_client_get_status_code(h);
+    int status = 0;
+    if (!open_following(h, who, &status, err, n)) goto out;
     if (status != 200) {
         snprintf(err, n, "%s: HTTP %d", who, status);
         goto out;
@@ -138,9 +187,11 @@ out:
     return ok ? total : 0;
 }
 
-cJSON *net_get_json(const char *url, const char *who, char *err, size_t n) {
+cJSON *net_get_json(const char *url, const char *who, char *err, size_t n) { return net_keep_get_json(NULL, url, who, err, n); }
+
+cJSON *net_keep_get_json(net_keep_t *k, const char *url, const char *who, char *err, size_t n) {
     int status = 0;
-    char *body = net_get(url, who, 256 * 1024, &status, NULL, err, n);
+    char *body = get(k, url, who, 256 * 1024, &status, NULL, err, n);
     if (!body) return NULL;
     cJSON *j = cJSON_Parse(body);
     if (status != 200) {

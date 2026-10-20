@@ -52,6 +52,16 @@ menu "ArtShow slideshow"
 
 endmenu
 
+menu "ArtShow now showing"
+    config ARTSHOW_WIKI_LANG
+        string "Wikipedia language to try first"
+        default "it"
+        help
+            The Now Showing page looks the picture on show up on this
+            Wikipedia ("it", "de", "fr"...; the file names' language), then
+            its artist there, then on English Wikipedia.
+endmenu
+
 menu "ArtShow clock"
 
     config ARTSHOW_NTP_SERVER

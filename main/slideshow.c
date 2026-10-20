@@ -47,6 +47,7 @@ static lv_image_dsc_t s_dsc;
 static uint16_t *s_out;            /* screen-sized RGB565: on show (transition.c draws into it) */
 static uint16_t *s_next;           /* screen-sized RGB565: the next picture, loaded ahead */
 static volatile bool s_paused;     /* another page covers the slideshow */
+static volatile int s_cur = -1;    /* the picture on show, in s_files */
 static TaskHandle_t s_task;
 static sdmmc_card_t *s_card;
 static jpeg_decoder_handle_t s_jpeg;
@@ -461,7 +462,7 @@ static void slideshow_task(void *arg) {
                  "Check the card, then tap the screen");
         while (s_paused) wait_note(500, false);
         show();
-        int cur = next;
+        int cur = s_cur = next;
         int64_t due = esp_timer_get_time() + CONFIG_ARTSHOW_INTERVAL_S * 1000000LL;
 
         /* the countdown: once the transition is done with s_next, the
@@ -527,3 +528,11 @@ void slideshow_start(lv_obj_t *parent) {
        higher one core 1's idle task starves and the task watchdog complains */
     xTaskCreatePinnedToCore(slideshow_task, "slides", 8192, NULL, tskIDLE_PRIORITY, &s_task, 1);
 }
+
+bool slideshow_now(char *path, size_t n) {
+    int k = s_cur;
+    snprintf(path, n, "%s", k >= 0 && k < s_nfiles ? s_files[k] : "");
+    return path[0];
+}
+
+const uint16_t *slideshow_screen(void) { return s_out; }
