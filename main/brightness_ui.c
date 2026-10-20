@@ -77,6 +77,7 @@ void brightness_ui_create(lv_obj_t *parent) {
     lv_obj_set_style_text_color(l, lv_color_hex(0x808080), 0);
     lv_obj_set_style_text_opa(l, LV_OPA_60, 0);
     lv_obj_align(b, LV_ALIGN_BOTTOM_LEFT, 12, -12);
+    lv_obj_set_ext_click_area(b, 24);   /* ~92 px to touch, out to the corner; it still looks 44 */
     lv_obj_add_event_cb(b, toggle_cb, LV_EVENT_CLICKED, NULL);
 
     s_slider = lv_slider_create(parent);

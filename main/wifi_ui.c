@@ -116,6 +116,7 @@ void wifi_ui_create(lv_obj_t *parent) {
     lv_obj_set_style_text_color(s_btn_label, lv_color_hex(0x808080), 0);
     lv_obj_set_style_text_opa(s_btn_label, LV_OPA_60, 0);
     lv_obj_align(b, LV_ALIGN_BOTTOM_RIGHT, -12, -12);
+    lv_obj_set_ext_click_area(b, 24);   /* ~92 px to touch, out to the corner; it still looks 44 */
 
     /* the setup panel, over everything on the top layer */
     s_panel = lv_obj_create(lv_layer_top());

@@ -43,6 +43,7 @@ void menu_create(lv_obj_t *parent, const menu_page_t *pages, int n) {
     lv_obj_set_style_text_color(l, lv_color_hex(0x808080), 0);
     lv_obj_set_style_text_opa(l, LV_OPA_60, 0);
     lv_obj_align(b, LV_ALIGN_TOP_LEFT, 12, 12);
+    lv_obj_set_ext_click_area(b, 24);   /* ~92 px to touch, out to the corner; it still looks 44 */
     lv_obj_add_event_cb(b, toggle_cb, LV_EVENT_CLICKED, NULL);
 
     /* the list: a flex column under the button (lv_list is deprecated in 9.6) */
