@@ -64,6 +64,7 @@ static const char *s_why;          /* why the last load() failed, if it's the pi
 static char s_jump[256];           /* the Gallery's pick, to show next ("" none) */
 static volatile int s_jump_k = -1; /* ... found in the list */
 static char s_thumb_after[256];    /* the background thumbnails' place in the index, by path */
+static volatile bool s_background = true;   /* off while the Generative page paints */
 static volatile int s_cur = -1;    /* the picture on show, in s_files */
 static TaskHandle_t s_task;
 static sdmmc_card_t *s_card;
@@ -607,7 +608,7 @@ static void slideshow_task(void *arg) {
             stop(LV_SYMBOL_WARNING "  None of the pictures can be shown (baseline JPEGs only)\n"
                  "Check the card, then tap the screen");
         while (s_paused || s_asleep) {   /* nobody watching: the missing thumbnails meanwhile */
-            if (!s_list_changed && s_jump_k < 0 && background_thumb()) wait_note(1, false);
+            if (!s_list_changed && s_jump_k < 0 && s_background && background_thumb()) wait_note(1, false);
             else wait_note(500, false);
         }
         if (s_list_changed || s_jump_k >= 0) continue;   /* rescanned, or a pick: what's ready isn't it */
@@ -736,3 +737,5 @@ void slideshow_jump(const char *path) {
     snprintf(s_jump, sizeof s_jump, "%s", path);
     if (s_task) xTaskNotify(s_task, NOTE_LIST, eSetValueWithOverwrite);
 }
+
+void slideshow_background(bool on) { s_background = on; }

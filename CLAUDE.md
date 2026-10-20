@@ -11,7 +11,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the gallery, the clock, weather, sun and moon, artwork and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the gallery, the clock, weather, sun and moon, artwork, generative and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) with notes per day |
 | `main/notes.c/.h` | the calendar's notes, in their own SQLite database: see Clock below |
@@ -20,6 +20,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
 | `main/sun_moon.c/.h`, `main/astro.c/.h` | the Sun and Moon page, and the astronomy under it: see Sun and Moon below |
+| `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
 | `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page; its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
 | `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page, and night mode: see Settings below |
@@ -435,3 +436,26 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   it anew, which is safe because favourites live in their file.
 - Settings blobs: new fields go at the end; an older, shorter blob fills the
   start and the defaults stay in the rest.
+
+## Generative
+
+- `main/gen_art.c`: three pieces painting into a 1024x600 RGB565 canvas a
+  slice at a time, each deterministic from its seed (the caption's number):
+  a flow field (2500 particles on two octaves of Perlin noise, faint alpha
+  trails; ~40 s), a Clifford or De Jong attractor (points counted per pixel,
+  a log tone map through the palette, redrawn each second; a minute of
+  painting: ~26 M points at ~0.44 M/s, ~100 s in all), Hitomezashi (random
+  row and column bits, the regions two-coloured by parity across stitches,
+  revealed row by row in ~20 s). An attractor's settings are tried first: a
+  trial run must cover enough of a coarse grid, else other settings.
+  Rendered on the computer before the board (the same file, a PPM).
+- `main/generative.c`: the canvas full screen (an lv_image, 64-byte aligned
+  for the PPA), caption at the bottom, Next and Save top right. A task on
+  core 1 at priority 1 paints 25 ms, then gives a tick back (the idle task,
+  LVGL), invalidating 4 times a second; only while the page is shown. A
+  finished piece stays 90 s. The palette: the 5 commonest unlike colours of
+  the slideshow's picture (4 bits a channel; black bars skipped), darkest
+  first and made darker (the ground). Save: esp_new_jpeg at quality 90, 4:4:4
+  (thin lines keep their colour), ~280 KB, into `/sdcard/Generated/`, and
+  `slideshow_added`. While it's shown the slideshow's background thumbnails
+  wait (`slideshow_background(false)`): the CPU and PSRAM are this page's.

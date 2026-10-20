@@ -27,6 +27,9 @@ void slideshow_rescan(void);
 void slideshow_added(const char *path);
 /* show this picture next, at once (the Gallery), and go on from there */
 void slideshow_jump(const char *path);
+/* the thumbnails made while paused (the Gallery's): off while another page
+ * needs the CPU and PSRAM (the Generative page) */
+void slideshow_background(bool on);
 /* hold the pictures while the screen is off for the night (night.c) */
 void slideshow_sleep(bool sleep);
 /* the file of the picture on show (its full path); false: none yet */

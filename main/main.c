@@ -1,6 +1,6 @@
 /* main.c - ArtShow: the pictures on the microSD card as a full-screen
  * slideshow, with the menu (top left: the slideshow, the gallery, a clock page, the
- * weather, the sun and moon, the artwork of the day, settings), "?" (top right: what's on show), the Wi-Fi
+ * weather, the sun and moon, the artwork of the day, generative art, settings), "?" (top right: what's on show), the Wi-Fi
  * button (bottom right) and the brightness slider (bottom left) over it. */
 #include "board.h"
 #include "esp_lvgl_port.h"
@@ -15,6 +15,7 @@
 #include "now_showing.h"
 #include "sun_moon.h"
 #include "gallery.h"
+#include "generative.h"
 #include "settings.h"
 #include "settings_page.h"
 #include "night.h"
@@ -63,6 +64,7 @@ void app_main(void) {
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
         lv_obj_t *weather = weather_page_create(scr);
         lv_obj_t *sky = sun_moon_create(scr);
+        lv_obj_t *gen = generative_create(scr);
         lv_obj_t *settings = settings_page_create(scr);
         lv_obj_t *artwork = artwork_page_create(scr);
         wifi_ui_create(scr);
@@ -74,6 +76,7 @@ void app_main(void) {
             { LV_SYMBOL_CHARGE "  Weather", weather, NULL },
             { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_shown },
             { LV_SYMBOL_EYE_OPEN "  Artwork of the Day", artwork, NULL },
+            { LV_SYMBOL_SHUFFLE "  Generative", gen, generative_shown },
             { LV_SYMBOL_SETTINGS "  Settings", settings, settings_page_shown },
         };
         menu_create(scr, pages, sizeof pages / sizeof pages[0]);
