@@ -11,7 +11,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the clock, weather, sun and moon, artwork and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the gallery, the clock, weather, sun and moon, artwork and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
@@ -19,6 +19,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
 | `main/sun_moon.c/.h`, `main/astro.c/.h` | the Sun and Moon page, and the astronomy under it: see Sun and Moon below |
+| `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page; its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
 | `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page, and night mode: see Settings below |
 | `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
@@ -368,9 +369,11 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   until it changes. Its first good showing stores its size in pixels: no
   write per picture after that (the card's wear). Artwork of the Day's Save
   adds its picture at once (`slideshow_added`).
-- Only the slideshow's task touches SQLite (`SQLITE_THREADSAFE=0`): others
-  ask (`slideshow_rescan`, `slideshow_added`: a note and a queue) and read
-  the list under `s_list_lock`. `s_files` holds MAX_FILES pointers from the
+- `SQLITE_THREADSAFE=0`, and a recursive mutex in index.c makes each public
+  call whole: the slideshow's task and the Gallery's worker share the one
+  connection (a rescan holds it ~1 s). The slideshow's list changes only in
+  its task (`slideshow_rescan`, `slideshow_added`: a note and a queue);
+  others read it under `s_list_lock`. `s_files` holds MAX_FILES pointers from the
   start: it never moves.
 - `components/sqlite3/`: SQLite 3.54.1's amalgamation, unchanged (README:
   the source and its hash; ~10 MB in git, ~520 KB in the app), with
@@ -384,3 +387,30 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   it's only an index.
 - The time zone is set first thing in `app_main` (`time_sync_tz`): the index
   opens before the time sync starts, and its "scanned" time is local.
+
+## Gallery
+
+- `main/gallery.c`: 15 thumbnails a page (5 x 3, cells made once: an object
+  per picture wouldn't fit internal RAM at 2000), sorted by artist then
+  title; modes All, Favourites, Artists (21 artist buttons a page, then one
+  artist's pictures), Can't show (with the index's reason). A pager top
+  right. A worker task queries the index and decodes the thumbnails, filling
+  the cells under the LVGL lock; a newer request stops an older one. A tap:
+  `slideshow_jump()` and `menu_select(0)`: that picture next ("Loading ..."
+  meanwhile: up to ~25 s if a thumbnail is being made, as decodes can't be
+  stopped). The star (drawn: the fonts have none) toggles a favourite.
+- Thumbnails (`thumb.c`): fitted into 176x112 in whole 16 px blocks (the
+  decoder's output is then exact), esp_new_jpeg at quality 75 (~6 KB), in
+  the index's `thumbs` table. Made when the slideshow shows a picture (from
+  the screen buffer, as shown), and while it's paused (another page) or
+  asleep: one picture at a time from the file, ~11 s each for the card's
+  4096 px ones. The Gallery redraws when `index_thumbs_version()` moves.
+- Favourites: `/sdcard/.artshow/favourites.txt` (one path per line) is the
+  truth, written at each star; the index's `fav` copies it after each scan,
+  so a rebuilt index (damaged, or a new layout) gets them back, and a picture
+  off the card for a while keeps its star. The Settings page's "Only
+  favourites" plays just those (none starred: all).
+- The index's layout is schema 2 (artist, title, fav, thumbs): another makes
+  it anew, which is safe because favourites live in their file.
+- Settings blobs: new fields go at the end; an older, shorter blob fills the
+  start and the defaults stay in the rest.

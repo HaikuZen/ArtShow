@@ -285,6 +285,7 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     switch_row(left, "Varied changes (else a dissolve)", &g_settings.varied);
     switch_row(left, "Shuffle (else by name)", &g_settings.shuffle);
     switch_row(left, "Fill the screen (crop)", &g_settings.fill);
+    switch_row(left, "Only favourites (the Gallery's stars)", &g_settings.favourites_only);
     heading(left, "Folders");
     s_folders = box(left, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_folders, 10, 0);

@@ -12,3 +12,5 @@ typedef struct {
 /* the button and its list; pages[0] is shown first. Call holding the LVGL lock,
  * after everything else on parent: the button stays on top */
 void menu_create(lv_obj_t *parent, const menu_page_t *pages, int n);
+/* show page k, as if picked in the menu (in the LVGL task) */
+void menu_select(int k);

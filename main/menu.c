@@ -73,3 +73,8 @@ void menu_create(lv_obj_t *parent, const menu_page_t *pages, int n) {
     lv_obj_set_state(s_items[0], LV_STATE_CHECKED, true);
     lv_obj_set_hidden(s_list, true);
 }
+
+void menu_select(int k) {
+    if (k >= 0 && k < s_n) show(k);
+    lv_obj_set_hidden(s_list, true);
+}

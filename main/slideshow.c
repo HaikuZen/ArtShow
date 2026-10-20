@@ -8,6 +8,7 @@
 #include "transition.h"
 #include "settings.h"
 #include "index.h"
+#include "thumb.h"
 #include "board_pins.h"
 #include "driver/jpeg_decode.h"
 #include "driver/sdmmc_host.h"
@@ -60,6 +61,9 @@ static QueueHandle_t s_added;      /* paths put on the card meanwhile (Artwork o
 static const char *s_bad[MAX_BAD];  /* can't be shown: left out this session (and in the index) */
 static int s_nbad;
 static const char *s_why;          /* why the last load() failed, if it's the picture's fault */
+static char s_jump[256];           /* the Gallery's pick, to show next ("" none) */
+static volatile int s_jump_k = -1; /* ... found in the list */
+static char s_thumb_after[256];    /* the background thumbnails' place in the index, by path */
 static volatile int s_cur = -1;    /* the picture on show, in s_files */
 static TaskHandle_t s_task;
 static sdmmc_card_t *s_card;
@@ -344,6 +348,15 @@ static void scale(const uint16_t *src, int stride, int sx, int sy, int sw, int s
     }
 }
 
+/* the Gallery's thumbnail of a picture, from w x h pixels at src */
+static void save_thumb(const char *path, const uint16_t *src, int stride, int w, int h) {
+    size_t len;
+    int tw, th;
+    uint8_t *jpg = thumb_encode(src, stride, w, h, &len, &tw, &th);
+    if (jpg) index_thumb_put(path, tw, th, jpg, len);
+    free(jpg);
+}
+
 /* a picture file into the screen buffer dst */
 static bool load(const char *path, uint16_t *dst) {
     int64_t t0 = esp_timer_get_time();
@@ -380,7 +393,9 @@ static bool load(const char *path, uint16_t *dst) {
 
     p = place(w, h);
     memset(dst, 0, LCD_H_RES * LCD_V_RES * sizeof *dst);
-    scale(s_dec, stride, p.sx, p.sy, p.sw, p.sh, dst, (LCD_H_RES - p.dw) / 2, (LCD_V_RES - p.dh) / 2, p.dw, p.dh);
+    int dx = (LCD_H_RES - p.dw) / 2, dy = (LCD_V_RES - p.dh) / 2;
+    scale(s_dec, stride, p.sx, p.sy, p.sw, p.sh, dst, dx, dy, p.dw, p.dh);
+    if (!index_has_thumb(path)) save_thumb(path, dst + (size_t)dy * LCD_H_RES + dx, LCD_H_RES, p.dw, p.dh);
     ESP_LOGI(TAG, "%s: %"PRIu32"x%"PRIu32" (%s %dx%d), read %d ms, decode %d ms, scale %d ms", path,
              info.width, info.height, how, w, h, (int)((t1 - t0) / 1000), (int)((t2 - t1) / 1000),
              (int)((esp_timer_get_time() - t2) / 1000));
@@ -425,6 +440,42 @@ static void tap_cb(lv_event_t *e) {
 /* ---- the task ---- */
 
 /* a tap within ms (NOTE_*), or 0. Taps in the middle count only with any */
+/* while nobody watches (another page on, or night): the thumbnail of one
+   picture that has none yet, from the file (decoded as small as the box
+   allows). false: none left (or no index) */
+static bool background_thumb(void) {
+    char path[256];
+    if (!index_is_open() || !index_next_unthumbed(s_thumb_after, path, sizeof path)) return false;
+    snprintf(s_thumb_after, sizeof s_thumb_after, "%s", path);   /* on, even if this one fails */
+    size_t len;
+    s_why = NULL;
+    if (!read_file(path, &len)) {
+        if (s_why) index_bad(path, s_why);
+        return true;
+    }
+    jpeg_decode_picture_info_t info;
+    if (jpeg_decoder_get_info(s_in, len, &info) != ESP_OK) {
+        index_bad(path, "not a JPEG");
+        return true;
+    }
+    int w = info.width, h = info.height, stride = 0, shift = 0;
+    while (shift < 3 && (w >> (shift + 1)) >= THUMB_W && (h >> (shift + 1)) >= THUMB_H) shift++;
+    while (shift < 3 && (size_t)(w >> shift) * (h >> shift) * 2 > DEC_MAX) shift++;
+    if (decode_hw(path, len, &info, &stride)) {
+        w = info.width;
+        h = info.height;
+    } else if (decode_sw(path, len, shift, &w, &h)) {
+        stride = w;
+    } else {
+        index_bad(path, "can't be decoded (progressive, or damaged)");
+        return true;
+    }
+    index_good(path, info.width, info.height);
+    save_thumb(path, s_dec, stride, w, h);
+    ESP_LOGI(TAG, "%s: thumbnail", path);
+    return true;
+}
+
 /* the requests from other tasks, done here: the index is this task's */
 static bool serve_requests(void) {
     bool changed = false;
@@ -439,9 +490,18 @@ static bool serve_requests(void) {
     if (s_want_rescan) {
         s_want_rescan = false;
         list_pictures(true);
+        s_thumb_after[0] = 0;
         changed = true;
     }
-    if (changed) s_list_changed = true;
+    if (s_jump[0]) {   /* the Gallery's pick: where it is in the list */
+        xSemaphoreTake(s_list_lock, portMAX_DELAY);
+        for (int k = 0; k < s_nfiles; k++)
+            if (!strcmp(s_files[k], s_jump)) s_jump_k = k;
+        xSemaphoreGive(s_list_lock);
+        s_jump[0] = 0;
+        changed = s_jump_k >= 0;
+    }
+    if (changed && s_jump_k < 0) s_list_changed = true;
     return changed;
 }
 
@@ -449,7 +509,7 @@ static int wait_note(int ms, bool any) {
     int64_t end = esp_timer_get_time() + ms * 1000LL;
     for (;;) {
         /* a request whose note a tap overwrote: served all the same */
-        if ((s_want_rescan || (s_added && uxQueueMessagesWaiting(s_added))) && serve_requests()) return NOTE_LIST;
+        if ((s_want_rescan || s_jump[0] || (s_added && uxQueueMessagesWaiting(s_added))) && serve_requests()) return NOTE_LIST;
         int left = (int)((end - esp_timer_get_time()) / 1000);
         uint32_t note = 0;
         if (left <= 0 || xTaskNotifyWait(0, UINT32_MAX, &note, pdMS_TO_TICKS(left)) != pdTRUE) return 0;
@@ -471,6 +531,7 @@ static void top_folder(const char *path, char *out, size_t n) {
 static bool playable(int k) {
     for (int b = 0; b < s_nbad; b++)
         if (s_bad[b] == s_files[k]) return false;
+    if (g_settings.favourites_only && !index_is_fav(s_files[k])) return false;
     char f[128];
     top_folder(s_files[k], f, sizeof f);
     return settings_folder_on(f);
@@ -536,11 +597,20 @@ static void slideshow_task(void *arg) {
             dir = 1;
             ready = false;
         }
+        if (s_jump_k >= 0) {   /* the Gallery's pick: next, at once */
+            next = s_jump_k;
+            s_jump_k = -1;
+            dir = 1;
+            ready = false;
+        }
         if (!ready && !prepare(&next, dir))   /* none loads: the card is gone, or all unreadable */
             stop(LV_SYMBOL_WARNING "  None of the pictures can be shown (baseline JPEGs only)\n"
                  "Check the card, then tap the screen");
-        while (s_paused || s_asleep) wait_note(500, false);
-        if (s_list_changed) continue;   /* rescanned meanwhile: what's ready may be gone */
+        while (s_paused || s_asleep) {   /* nobody watching: the missing thumbnails meanwhile */
+            if (!s_list_changed && s_jump_k < 0 && background_thumb()) wait_note(1, false);
+            else wait_note(500, false);
+        }
+        if (s_list_changed || s_jump_k >= 0) continue;   /* rescanned, or a pick: what's ready isn't it */
         show();
         int cur = s_cur = next;
         int64_t due = esp_timer_get_time() + g_settings.interval_s * 1000000LL;
@@ -655,3 +725,14 @@ int slideshow_folders(char names[][64], int *counts, int max) {
 int slideshow_count(void) { return s_nfiles; }
 
 void slideshow_sleep(bool sleep) { s_asleep = sleep; }
+
+void slideshow_jump(const char *path) {
+    /* it may take a while (a thumbnail being made, then a big picture's
+       decode: ~25 s at worst): say so until it shows (show() hides it) */
+    const char *base = strrchr(path, '/');
+    char msg[200];
+    snprintf(msg, sizeof msg, "Loading %.*s ...", (int)strcspn(base ? base + 1 : path, "."), base ? base + 1 : path);
+    message(msg);
+    snprintf(s_jump, sizeof s_jump, "%s", path);
+    if (s_task) xTaskNotify(s_task, NOTE_LIST, eSetValueWithOverwrite);
+}

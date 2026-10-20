@@ -1,5 +1,5 @@
 /* main.c - ArtShow: the pictures on the microSD card as a full-screen
- * slideshow, with the menu (top left: the slideshow, a clock page, the
+ * slideshow, with the menu (top left: the slideshow, the gallery, a clock page, the
  * weather, the sun and moon, the artwork of the day, settings), "?" (top right: what's on show), the Wi-Fi
  * button (bottom right) and the brightness slider (bottom left) over it. */
 #include "board.h"
@@ -14,6 +14,7 @@
 #include "artwork_page.h"
 #include "now_showing.h"
 #include "sun_moon.h"
+#include "gallery.h"
 #include "settings.h"
 #include "settings_page.h"
 #include "night.h"
@@ -57,6 +58,7 @@ void app_main(void) {
         lv_obj_t *scr = lv_screen_active();
         slideshow_start(scr);
         now_showing_create(scr);                    /* over the slideshow: its "?" button, top right */
+        lv_obj_t *gallery = gallery_create(scr);
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
         lv_obj_t *weather = weather_page_create(scr);
         lv_obj_t *sky = sun_moon_create(scr);
@@ -65,7 +67,8 @@ void app_main(void) {
         wifi_ui_create(scr);
         brightness_ui_create(scr);
         const menu_page_t pages[] = {
-            { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown },
+            { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown },   /* first: the Gallery's menu_select(0) */
+            { LV_SYMBOL_LIST "  Gallery", gallery, gallery_shown },
             { LV_SYMBOL_BELL "  Clock", clock, clock_page_shown },
             { LV_SYMBOL_CHARGE "  Weather", weather, NULL },
             { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_shown },

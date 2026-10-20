@@ -51,9 +51,11 @@ void settings_load(void) {
     s_lock = xSemaphoreCreateMutex();
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
-    blob_t b;
+    /* new fields go at the end: an older, shorter blob fills the start and the
+       defaults stay in the rest */
+    blob_t b = { .version = VERSION, .s = g_settings };
     size_t n = sizeof b;
-    if (nvs_get_blob(h, NVS_KEY, &b, &n) == ESP_OK && n == sizeof b && b.version == VERSION) g_settings = b.s;
+    if (nvs_get_blob(h, NVS_KEY, &b, &n) == ESP_OK && n <= sizeof b && b.version == VERSION) g_settings = b.s;
     n = sizeof s_skip;
     if (nvs_get_str(h, NVS_SKIP, s_skip, &n) != ESP_OK) s_skip[0] = 0;
     nvs_close(h);

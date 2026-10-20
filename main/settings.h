@@ -18,6 +18,7 @@ typedef struct {
     int32_t night_from;     /* minutes after midnight (NIGHT_HOURS) */
     int32_t night_to;
     int32_t night_level;    /* the backlight at night, %; 0: off */
+    bool favourites_only;   /* the Gallery's stars; none starred: all */
 } settings_t;
 
 extern settings_t g_settings;
