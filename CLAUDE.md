@@ -11,7 +11,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the clock, weather, sun and moon, and artwork pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the clock, weather, sun and moon, artwork and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
@@ -19,6 +19,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
 | `main/sun_moon.c/.h`, `main/astro.c/.h` | the Sun and Moon page, and the astronomy under it: see Sun and Moon below |
+| `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page, and night mode: see Settings below |
 | `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
 | `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file; redirects followed; a connection kept for a run of calls to one server), JSON path helpers, cJSON in PSRAM |
 | `main/fonts/` | Montserrat 16/20/24/32 with Latin-1, Latin Extended-A and typographic punctuation (`art_font_*`): the museum's names. LVGL's built-in fonts are ASCII only |
@@ -32,7 +33,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `partitions.csv` | NVS at 0x9000 (as in IDF's single-app-large table), the app at 4 MB |
 | `main/wifi.c/.h`, `main/wifi_ui.c`, `main/Kconfig.projbuild` | Wi-Fi through the C6: see Wi-Fi below |
 | `main/audio.c/.h` | the speaker: see Audio below |
-| `main/Kconfig.projbuild` | also `idf.py menuconfig` > ArtShow slideshow: seconds per picture, transition length, varied transitions, shuffle, fill (crop) |
+| `main/Kconfig.projbuild` | also `idf.py menuconfig` > ArtShow slideshow: the first-boot defaults of seconds per picture, transition length, varied transitions, shuffle, fill (crop); the Settings page changes them |
 
 ## Build and flash
 
@@ -327,3 +328,27 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   (`astro_moon_phase`). The moon is drawn row by row: the lit part from the
   limb to the terminator (x = (1 - 2 * lit) * half-width), right side when
   waxing in the northern hemisphere, mirrored in the southern.
+
+## Settings
+
+- `main/settings.c`: `g_settings` (seconds per picture, transition length,
+  varied, shuffle, fill, night mode, hours and level), a versioned blob in NVS
+  (`artshow`/`settings`; another size or version: the defaults), defaults from
+  menuconfig. Written in the LVGL task (the page), read anywhere when needed:
+  the slideshow per picture, transition.c per change. The folders switched
+  off: `artshow`/`skipdirs`, "\nA\nB\n" (exclusions: a new folder plays).
+- The slideshow: `step()` skips pictures in a folder that's off (all off:
+  any), and when the shuffle setting flips it reorders at once (a shuffle,
+  or names) and starts from the top. Fill applies from the next picture
+  decoded: the one preloaded already keeps the old one.
+- `main/night.c`: a 1 s LVGL timer. Night: set hours (crossing midnight
+  works), or today's sunset to sunrise (astro.c, once a day, the weather's
+  place). Dark once LVGL's inactive time (`lv_display_get_inactive_time`) is
+  past 2 minutes; a touch lights it at the slider's level (the touch also
+  does what it touched). Night level 0: the backlight off and
+  `slideshow_sleep()` (no reading or decoding).
+- The page's About: Wi-Fi (`wifi_info`: esp_netif, no call to the C6), free
+  memory, pictures, uptime, the firmware's version and build date.
+- Artwork of the Day's Save keeps a full-size picture only if it's within
+  `SLIDESHOW_MAX_JPEG` (12 MB: the slideshow reads a file whole), else the
+  small one.

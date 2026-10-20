@@ -93,3 +93,5 @@ void brightness_ui_create(lv_obj_t *parent) {
     s_close = lv_timer_create(close_cb, CLOSE_MS, NULL);
     lv_timer_pause(s_close);
 }
+
+int brightness_ui_level(void) { return s_slider ? lv_slider_get_value(s_slider) : load_level(); }

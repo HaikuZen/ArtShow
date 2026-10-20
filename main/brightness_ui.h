@@ -5,3 +5,5 @@
 #include "lvgl.h"
 
 void brightness_ui_create(lv_obj_t *parent);
+/* the level set on the slider, % (night mode goes back to it) */
+int brightness_ui_level(void);

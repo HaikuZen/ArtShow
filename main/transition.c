@@ -11,6 +11,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "settings.h"
 #include <math.h>
 #include <string.h>
 
@@ -139,10 +140,12 @@ static inline uint16_t mix(uint16_t o, uint16_t n, int a) {
     return (uint16_t)(c | c >> 16);
 }
 
+static uint32_t s_len;   /* ms: this change's length */
+
 static void frame_cb(lv_timer_t *t) {
-    uint32_t el = lv_tick_elaps(s_t0);
-    bool done = el >= CONFIG_ARTSHOW_FADE_MS;
-    int front = done ? 255 + s_feather : (int)(el * (255 + s_feather) / CONFIG_ARTSHOW_FADE_MS);
+    uint32_t el = lv_tick_elaps(s_t0), len = s_len;
+    bool done = el >= len;
+    int front = done ? 255 + s_feather : (int)(el * (255 + s_feather) / len);
     s_frames++;
     for (int band = 0; band < BH / BAND; band++) {
         int x0 = BW, x1 = -1;   /* the band's blocks redrawn */
@@ -226,7 +229,8 @@ void transition_start(const uint16_t *next) {
     s_new = next;
 
     int k = 0;   /* never the same twice in a row */
-    if (CONFIG_ARTSHOW_VARIED_TRANSITIONS)
+    s_len = g_settings.fade_ms;   /* the Settings page's, as it is now: the same for the whole change */
+    if (g_settings.varied)
         do k = esp_random() % N_FX; while (k == last);
     last = k;
     const effect_t *fx = &s_fx[k];

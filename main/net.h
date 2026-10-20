@@ -13,9 +13,11 @@ void net_init(void);
 char *net_get(const char *url, const char *who, size_t max, int *status, size_t *len, char *err, size_t n);
 /* GET url straight into the file path (16 KB at a time: no big buffer); a
  * failure removes the file. progress (may be NULL) hears every 256 KB; total
- * is 0 if the server didn't say. The size written, or 0 and err */
+ * is 0 if the server didn't say. More than max bytes (said before, or as it
+ * comes): *too_big, nothing kept. The size written, or 0 and err */
 typedef void (*net_progress_t)(size_t done, size_t total);
-size_t net_download(const char *url, const char *who, const char *path, net_progress_t progress, char *err, size_t n);
+size_t net_download(const char *url, const char *who, const char *path, size_t max, bool *too_big,
+                    net_progress_t progress, char *err, size_t n);
 /* GET and parse JSON (up to 256 KB); not 200: NULL, and err holds the
  * server's own message when it sent one */
 cJSON *net_get_json(const char *url, const char *who, char *err, size_t n);

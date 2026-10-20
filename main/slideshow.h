@@ -5,6 +5,9 @@
 #include <stdbool.h>
 #include "lvgl.h"
 
+/* bigger picture files are skipped: each is read whole into PSRAM */
+#define SLIDESHOW_MAX_JPEG (12 * 1024 * 1024)
+
 /* mount the card; call once, BEFORE wifi_start(). The card shares the SDMMC
  * host with esp_hosted's link to the C6, and a card init (its clock changes)
  * while that link runs breaks it: esp_hosted restarts the board. So no card
@@ -15,8 +18,14 @@ void slideshow_start(lv_obj_t *parent);
 /* hold the next picture back while another page covers the slideshow (the
  * next one still loads); resumed, it shows at once */
 void slideshow_pause(bool pause);
+/* hold the pictures while the screen is off for the night (night.c) */
+void slideshow_sleep(bool sleep);
 /* the file of the picture on show (its full path); false: none yet */
 bool slideshow_now(char *path, size_t n);
+/* the folders with pictures under the card's top ("" for the top itself) and
+ * how many each holds, up to max; 0 until the card is listed */
+int slideshow_folders(char names[][64], int *counts, int max);
+int slideshow_count(void);   /* pictures on the card */
 /* what the slideshow shows: 1024x600 RGB565, rows of 1024 pixels; NULL before
  * it starts. Read it in the LVGL task, after transition_finish() */
 const uint16_t *slideshow_screen(void);

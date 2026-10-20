@@ -18,6 +18,7 @@ menu "CrowPanel Wi-Fi"
 endmenu
 
 menu "ArtShow slideshow"
+    comment "The defaults: the Settings page changes them (kept in NVS)"
 
     config ARTSHOW_INTERVAL_S
         int "Seconds per picture"

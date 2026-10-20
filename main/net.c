@@ -129,7 +129,9 @@ char *net_get(const char *url, const char *who, size_t max, int *status, size_t 
     return get(NULL, url, who, max, status, len, err, n);
 }
 
-size_t net_download(const char *url, const char *who, const char *path, net_progress_t progress, char *err, size_t n) {
+size_t net_download(const char *url, const char *who, const char *path, size_t max, bool *too_big,
+                    net_progress_t progress, char *err, size_t n) {
+    *too_big = false;
     const esp_http_client_config_t c = {
         .url = url,
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -153,6 +155,11 @@ size_t net_download(const char *url, const char *who, const char *path, net_prog
         goto out;
     }
     int64_t size = esp_http_client_get_content_length(h);
+    if (size > (int64_t)max) {
+        *too_big = true;
+        snprintf(err, n, "%s: too big (%lld bytes)", who, size);
+        goto out;
+    }
     if (!(f = fopen(path, "wb"))) {
         snprintf(err, n, "Can't write on the card (%s)", strerror(errno));
         goto out;
@@ -169,6 +176,11 @@ size_t net_download(const char *url, const char *who, const char *path, net_prog
             goto out;
         }
         total += r;
+        if (total > max) {
+            *too_big = true;
+            snprintf(err, n, "%s: too big", who);
+            goto out;
+        }
         if (progress && (total >> 18) != ((total - r) >> 18)) progress(total, size > 0 ? size : 0);
     }
     ok = total > 0;

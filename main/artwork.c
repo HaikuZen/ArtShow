@@ -7,6 +7,7 @@
 #include "net.h"
 #include "wifi.h"
 #include "time_sync.h"
+#include "slideshow.h"
 #include "esp_jpeg_dec.h"
 #include "esp_heap_caps.h"
 #include "esp_random.h"
@@ -286,11 +287,13 @@ static void save(char *msg, size_t n) {
     }
     /* the full-size picture: the small one would look blocky full screen in
        the slideshow. Straight to the card, never whole in memory */
+    bool too_big = false;
     if (s_full[0]) {
-        size_t got = net_download(s_full, "The Met's pictures", path, save_progress, msg, n);
+        size_t got = net_download(s_full, "The Met's pictures", path, SLIDESHOW_MAX_JPEG, &too_big, save_progress, msg, n);
         if (got) snprintf(msg, n, "Saved to the card, in \"Artwork of the Day\" (%u KB): in the slideshow after a restart",
                           (unsigned)(got / 1024));
-        return;
+        if (!too_big) return;
+        /* more than the slideshow reads: the small one, then */
     }
     FILE *f = fopen(path, "wb");
     bool ok = f && fwrite(s_jpeg, 1, s_jpeg_len, f) == s_jpeg_len;
@@ -299,7 +302,8 @@ static void save(char *msg, size_t n) {
         remove(path);
         snprintf(msg, n, "Can't write it on the card");
     } else {
-        snprintf(msg, n, "Saved to the card, in \"Artwork of the Day\" (small: no bigger one): in the slideshow after a restart");
+        snprintf(msg, n, "Saved to the card, in \"Artwork of the Day\" (small: %s): in the slideshow after a restart",
+                 too_big ? "the full size is too big for the slideshow" : "no bigger one");
     }
 }
 

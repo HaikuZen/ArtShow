@@ -1,6 +1,6 @@
 /* main.c - ArtShow: the pictures on the microSD card as a full-screen
  * slideshow, with the menu (top left: the slideshow, a clock page, the
- * weather, the sun and moon, the artwork of the day), "?" (top right: what's on show), the Wi-Fi
+ * weather, the sun and moon, the artwork of the day, settings), "?" (top right: what's on show), the Wi-Fi
  * button (bottom right) and the brightness slider (bottom left) over it. */
 #include "board.h"
 #include "esp_lvgl_port.h"
@@ -14,6 +14,9 @@
 #include "artwork_page.h"
 #include "now_showing.h"
 #include "sun_moon.h"
+#include "settings.h"
+#include "settings_page.h"
+#include "night.h"
 #include "net.h"
 #include "menu.h"
 #include "time_sync.h"
@@ -46,6 +49,7 @@ void app_main(void) {
     board_init();
     bool card = slideshow_mount();   /* before wifi_start: see slideshow.h */
     nvs_init();
+    settings_load();                 /* before the slideshow: its order, timing, folders */
     net_init();
     weather_config_load(card);       /* config.json on the card; the picked provider in NVS */
     if (lvgl_port_lock(0)) {   /* every LVGL call from outside the LVGL task holds the lock */
@@ -55,6 +59,7 @@ void app_main(void) {
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
         lv_obj_t *weather = weather_page_create(scr);
         lv_obj_t *sky = sun_moon_create(scr);
+        lv_obj_t *settings = settings_page_create(scr);
         lv_obj_t *artwork = artwork_page_create(scr);
         wifi_ui_create(scr);
         brightness_ui_create(scr);
@@ -64,8 +69,10 @@ void app_main(void) {
             { LV_SYMBOL_CHARGE "  Weather", weather, NULL },
             { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_shown },
             { LV_SYMBOL_EYE_OPEN "  Artwork of the Day", artwork, NULL },
+            { LV_SYMBOL_SETTINGS "  Settings", settings, settings_page_shown },
         };
         menu_create(scr, pages, sizeof pages / sizeof pages[0]);
+        night_start();
         lvgl_port_unlock();
     }
     audio_init();

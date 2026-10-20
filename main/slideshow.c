@@ -6,6 +6,7 @@
  * once, before Wi-Fi starts (slideshow_mount). */
 #include "slideshow.h"
 #include "transition.h"
+#include "settings.h"
 #include "board_pins.h"
 #include "driver/jpeg_decode.h"
 #include "driver/sdmmc_host.h"
@@ -35,7 +36,7 @@ static const char *TAG = "slides";
 #define SD_FREQ_KHZ  SDMMC_FREQ_DEFAULT   /* 20 MHz; Elecrow's lesson uses 10000 if a card misbehaves */
 #define MAX_FILES    2000
 #define MAX_DEPTH    4                    /* folders below the card's root */
-#define MAX_JPEG     (12 * 1024 * 1024)   /* bigger files are skipped */
+#define MAX_JPEG     SLIDESHOW_MAX_JPEG
 #define DEC_MAX      (8 * 1024 * 1024)    /* a decoded picture, RGB565: bigger ones decode shrunk */
 #define NOTE_NEXT    1                    /* task notifications from the tap handler */
 #define NOTE_PREV    2
@@ -47,6 +48,7 @@ static lv_image_dsc_t s_dsc;
 static uint16_t *s_out;            /* screen-sized RGB565: on show (transition.c draws into it) */
 static uint16_t *s_next;           /* screen-sized RGB565: the next picture, loaded ahead */
 static volatile bool s_paused;     /* another page covers the slideshow */
+static volatile bool s_asleep;     /* the screen is off for the night */
 static volatile int s_cur = -1;    /* the picture on show, in s_files */
 static TaskHandle_t s_task;
 static sdmmc_card_t *s_card;
@@ -179,11 +181,18 @@ static void shuffle(void) {
     }
 }
 
+/* the order the Settings page asks for: a new shuffle, or names */
+static bool s_shuffled;
+static void reorder(void) {
+    s_shuffled = g_settings.shuffle;
+    if (s_shuffled) shuffle();
+    else qsort(s_files, s_nfiles, sizeof *s_files, by_name);
+}
+
 static void list_pictures(void) {
     free_list();
     scan_dir(MOUNT, 0);
-    qsort(s_files, s_nfiles, sizeof *s_files, by_name);
-    if (CONFIG_ARTSHOW_SHUFFLE) shuffle();
+    reorder();
     ESP_LOGI(TAG, "%d pictures on the card%s", s_nfiles, s_nfiles >= MAX_FILES ? " (the most it lists)" : "");
 }
 
@@ -212,21 +221,21 @@ static bool read_file(const char *path, size_t *len) {
 
 /* where a w x h picture goes: the source rect (sx, sy, sw, sh) shown, and the
  * size (dw, dh) it takes, centered: whole with black bars, or cropped to fill
- * the screen with CONFIG_ARTSHOW_FILL */
+ * the screen (the Settings page's fill) */
 typedef struct { int sx, sy, sw, sh, dw, dh; } place_t;
 
 static place_t place(int w, int h) {
     place_t p = { .sw = w, .sh = h };
     bool wider = (int64_t)w * LCD_V_RES > (int64_t)h * LCD_H_RES;   /* than the screen */
-#if CONFIG_ARTSHOW_FILL
-    if (wider) { p.sw = (int)((int64_t)h * LCD_H_RES / LCD_V_RES); p.sx = (w - p.sw) / 2; }
-    else       { p.sh = (int)((int64_t)w * LCD_V_RES / LCD_H_RES); p.sy = (h - p.sh) / 2; }
-    p.dw = LCD_H_RES;
-    p.dh = LCD_V_RES;
-#else
-    if (wider) { p.dw = LCD_H_RES; p.dh = (int)((int64_t)h * LCD_H_RES / w); }
-    else       { p.dh = LCD_V_RES; p.dw = (int)((int64_t)w * LCD_V_RES / h); }
-#endif
+    if (g_settings.fill) {
+        if (wider) { p.sw = (int)((int64_t)h * LCD_H_RES / LCD_V_RES); p.sx = (w - p.sw) / 2; }
+        else       { p.sh = (int)((int64_t)w * LCD_V_RES / LCD_H_RES); p.sy = (h - p.sh) / 2; }
+        p.dw = LCD_H_RES;
+        p.dh = LCD_V_RES;
+    } else {
+        if (wider) { p.dw = LCD_H_RES; p.dh = (int)((int64_t)h * LCD_H_RES / w); }
+        else       { p.dh = LCD_V_RES; p.dw = (int)((int64_t)w * LCD_V_RES / h); }
+    }
     if (p.sw < 1) p.sw = 1;
     if (p.sh < 1) p.sh = 1;
     if (p.dw < 1) p.dw = 1;
@@ -418,10 +427,31 @@ static int wait_note(int ms, bool any) {
 }
 
 /* the index after k going dir; going forward past the last, a new order */
+/* "/sdcard/DailyArt Pictures/x.jpg" -> "DailyArt Pictures"; "" at the top */
+static void top_folder(const char *path, char *out, size_t n) {
+    const char *p = path + strlen(MOUNT) + 1, *slash = strchr(p, '/');
+    snprintf(out, n, "%.*s", slash ? (int)(slash - p) : 0, p);
+}
+
+static bool playable(int k) {
+    char f[128];
+    top_folder(s_files[k], f, sizeof f);
+    return settings_folder_on(f);
+}
+
+/* the next picture in a folder that's on (any, if they're all off); the
+   order changes when the Settings page's shuffle does, else each round */
 static int step(int k, int dir) {
-    k = (k + dir + s_nfiles) % s_nfiles;
-    if (k == 0 && dir > 0 && CONFIG_ARTSHOW_SHUFFLE) shuffle();
-    return k;
+    if (s_shuffled != g_settings.shuffle) {
+        reorder();
+        k = dir > 0 ? -1 : 0;   /* from the start of the new order */
+    }
+    for (int n = 0; n < s_nfiles; n++) {
+        k = (k + dir + s_nfiles) % s_nfiles;
+        if (k == 0 && dir > 0 && s_shuffled) shuffle();
+        if (playable(k)) return k;
+    }
+    return (k + dir + s_nfiles) % s_nfiles;
 }
 
 /* picture *k into the hidden buffer, passing over those that fail in direction
@@ -454,21 +484,21 @@ static void slideshow_task(void *arg) {
     if (!s_nfiles) stop(LV_SYMBOL_IMAGE "  No JPEG pictures on the card (.jpg or .jpeg, in any folder)\n"
                         "Put some on it, then tap the screen");
 
-    int next = 0, dir = 1;
+    int next = step(s_nfiles - 1, 1), dir = 1;   /* the first in a folder that's on */
     bool ready = false;   /* picture next is in the hidden buffer already */
     for (;;) {
         if (!ready && !prepare(&next, dir))   /* none loads: the card is gone, or all unreadable */
             stop(LV_SYMBOL_WARNING "  None of the pictures can be shown (baseline JPEGs only)\n"
                  "Check the card, then tap the screen");
-        while (s_paused) wait_note(500, false);
+        while (s_paused || s_asleep) wait_note(500, false);
         show();
         int cur = s_cur = next;
-        int64_t due = esp_timer_get_time() + CONFIG_ARTSHOW_INTERVAL_S * 1000000LL;
+        int64_t due = esp_timer_get_time() + g_settings.interval_s * 1000000LL;
 
         /* the countdown: once the transition is done with s_next, the
            next picture loads into it, and shows when the time is up */
         ready = false;
-        int note = wait_note(CONFIG_ARTSHOW_FADE_MS + 100, false);
+        int note = wait_note(g_settings.fade_ms + 100, false);
         if (!note) {
             next = step(cur, 1);
             ready = prepare(&next, 1);   /* false: the loop's prepare tries again, and reports */
@@ -536,3 +566,24 @@ bool slideshow_now(char *path, size_t n) {
 }
 
 const uint16_t *slideshow_screen(void) { return s_out; }
+
+int slideshow_folders(char names[][64], int *counts, int max) {
+    int n = 0;
+    for (int k = 0; k < s_nfiles; k++) {
+        char f[64];
+        top_folder(s_files[k], f, sizeof f);
+        int i = 0;
+        while (i < n && strcmp(names[i], f)) i++;
+        if (i == n) {
+            if (n == max) continue;
+            snprintf(names[n], 64, "%s", f);
+            counts[n++] = 0;
+        }
+        counts[i]++;
+    }
+    return n;
+}
+
+int slideshow_count(void) { return s_nfiles; }
+
+void slideshow_sleep(bool sleep) { s_asleep = sleep; }

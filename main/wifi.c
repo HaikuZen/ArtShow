@@ -34,6 +34,7 @@ static wifi_status_cb_t s_status_cb;
 static volatile bool s_connected;
 /* the Wi-Fi task's own state */
 static char s_ssid[33], s_pass[65];
+static esp_netif_t *s_netif;   /* for wifi_info: its IP */
 static bool s_have, s_save, s_leaving, s_retry;
 static int s_tries;
 static TickType_t s_retry_at;
@@ -232,7 +233,7 @@ void wifi_start(void) {
     TRY(err);
     TRY(esp_netif_init());
     TRY(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    s_netif = esp_netif_create_default_wifi_sta();
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     TRY(esp_wifi_init(&cfg));
     TRY(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -244,4 +245,15 @@ void wifi_start(void) {
         ESP_LOGE(TAG, "no memory for the Wi-Fi task - no Wi-Fi");
         status(WIFI_OFF, "no memory");
     }
+}
+
+bool wifi_info(char *ssid, size_t ns, char *ip, size_t ni) {
+    snprintf(ssid, ns, "%s", s_ssid);
+    esp_netif_ip_info_t info;
+    if (!s_connected || !s_netif || esp_netif_get_ip_info(s_netif, &info) != ESP_OK) {
+        snprintf(ip, ni, "-");
+        return false;
+    }
+    snprintf(ip, ni, IPSTR, IP2STR(&info.ip));
+    return true;
 }
