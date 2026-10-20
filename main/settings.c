@@ -2,6 +2,7 @@
  * another size (an older layout) is dropped for the defaults. */
 #include "settings.h"
 #include "nvs.h"
+#include "board.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -57,6 +58,7 @@ void settings_load(void) {
     blob_t b = { .version = VERSION, .s = g_settings };
     size_t n = sizeof b;
     if (nvs_get_blob(h, NVS_KEY, &b, &n) == ESP_OK && n <= sizeof b && b.version == VERSION) g_settings = b.s;
+    if (g_settings.night_level > 0 && g_settings.night_level < BL_STEADY_MIN) g_settings.night_level = BL_STEADY_MIN;   /* kept from before the floor */
     n = sizeof s_skip;
     if (nvs_get_str(h, NVS_SKIP, s_skip, &n) != ESP_OK) s_skip[0] = 0;
     nvs_close(h);

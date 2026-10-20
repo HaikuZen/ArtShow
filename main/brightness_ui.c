@@ -8,7 +8,7 @@ static const char *TAG = "bright";
 
 #define NVS_NS      "artshow"
 #define NVS_KEY     "bright"
-#define LEVEL_MIN   5       /* % : below it the screen looks off */
+#define LEVEL_MIN   BL_STEADY_MIN   /* % : below it the backlight flickers */
 #define LEVEL_DEF   80
 #define CLOSE_MS    5000    /* the slider folds away after this long untouched */
 

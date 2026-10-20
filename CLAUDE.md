@@ -354,8 +354,9 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   to 30 kHz (`board_set_backlight_hz`, 30 kHz at boot until the setting
   applies), live. The screen flickered when dim (15 %), more on white areas,
   and much the same at 1-30 kHz: likely the MT9201 near its floor, not the
-  frequency. To try next: a higher night level (25-30 %), then the panel's
-  ~56 Hz refresh (DPI_CLK_MHZ 51; 60 Hz needs ~55 MHz and a rebuild).
+  frequency. 25 % is steady: `BL_STEADY_MIN` (board.h) is the floor of the
+  brightness slider and the night level (which also has 0: off); a lower
+  saved level is raised at load.
 - The page's About: Wi-Fi (`wifi_info`: esp_netif, no call to the C6), free
   memory, pictures, uptime, the firmware's version and build date.
 - Artwork of the Day's Save keeps a full-size picture only if it's within

@@ -224,8 +224,13 @@ static void to_cb(lv_event_t *e) {
     if (s_built) night_refresh();
 }
 
+/* the night's level: off, or from the steady floor up (below it, it flickers) */
+static const int LEVELS[] = { 0, BL_STEADY_MIN, BL_STEADY_MIN + 5, BL_STEADY_MIN + 10, BL_STEADY_MIN + 15,
+                              BL_STEADY_MIN + 25, BL_STEADY_MIN + 35 };
+#define N_LEVELS (int)(sizeof LEVELS / sizeof LEVELS[0])
+
 static void level_cb(lv_event_t *e) {
-    g_settings.night_level = slider_value(e);
+    g_settings.night_level = LEVELS[slider_value(e)];
     if (g_settings.night_level) lv_label_set_text_fmt(s_level_v, "%d %%", (int)g_settings.night_level);
     else lv_label_set_text(s_level_v, "Off");
     if (s_built) night_refresh();
@@ -335,7 +340,9 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     lv_obj_set_style_pad_row(s_hours, 14, 0);
     slider_row(s_hours, "Dark from", 0, 47, g_settings.night_from / 30, from_cb, &s_from_v);
     slider_row(s_hours, "Until", 0, 47, g_settings.night_to / 30, to_cb, &s_to_v);
-    slider_row(right, "The screen at night", 0, 30, g_settings.night_level, level_cb, &s_level_v);
+    int lv = 0;
+    while (lv + 1 < N_LEVELS && LEVELS[lv] < g_settings.night_level) lv++;
+    slider_row(right, "The screen at night", 0, N_LEVELS - 1, lv, level_cb, &s_level_v);
     note(right, "Dark once it's left untouched for 2 minutes; a touch lights it again.");
     int hz = N_HZ - 1;
     while (hz > 0 && HZ[hz] > g_settings.backlight_hz) hz--;

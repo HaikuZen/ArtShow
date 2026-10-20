@@ -4,6 +4,10 @@
 /* power, I2C, backlight, panel, touch and the LVGL task; call once from app_main */
 void board_init(void);
 /* backlight 0..100 % (0 = off) */
+/* the lowest backlight level (%) that holds steady: below it the MT9201 flickers
+ * (more where the picture is white; much the same at any PWM frequency).
+ * Seen on the bench: 15 % flickers, 25 % is steady. 0 (off) is fine */
+#define BL_STEADY_MIN 25
 void board_set_brightness(int pct);
 /* the backlight's PWM frequency (30 kHz at boot): the Settings page's "Backlight
  * switching", for a screen that flickers when dim */
