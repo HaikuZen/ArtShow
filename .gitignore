@@ -2,3 +2,5 @@ build/
 managed_components/
 sdkconfig
 sdkconfig.old
+.vscode/
+build-wizard.log
