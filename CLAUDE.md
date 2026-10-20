@@ -13,7 +13,8 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 |---|---|
 | `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the gallery, the clock, weather, sun and moon, artwork and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
-| `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) |
+| `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) with notes per day |
+| `main/notes.c/.h` | the calendar's notes, in their own SQLite database: see Clock below |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
 | `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
@@ -203,6 +204,19 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   calendar is hidden (the clock says 1970). A 200 ms LVGL timer moves the
   hands, only while the page is shown; a new day resets the calendar to the
   current month (its arrows show others meanwhile).
+- Notes: tap a day on the calendar for its note (an editor over everything
+  on `lv_layer_top`, with the keyboard; Save, Delete, Close). Days with a note
+  are highlighted (`lv_calendar_set_highlighted_dates`, every month); today's
+  note shows under the calendar. LVGL's highlight is a fill on the day's
+  cell, and it draws no fill for a transparent cell: the cells are opaque in
+  the calendar's colour instead of transparent.
+- `main/notes.c`: `/sdcard/.artshow/notes.db`, `notes(day "2026-10-20", text,
+  updated)`. Its own database, not the picture index's: that one is made
+  anew when it can't be read, and notes are written, not found again. One
+  that can't be read is renamed (`notes-unreadable-<time>.db`) and kept.
+  `synchronous = FULL` (FAT, a reset board: see Index). It shares index.c's
+  SQLite lock (`index_sqlite_lock`): SQLite is built for one thread, and
+  the first database opened sets SQLite up (memory from PSRAM).
 - LVGL takes its memory from the system heap (`CONFIG_LV_USE_CLIB_MALLOC`), not
   a 64 KB pool: drawing the clock page takes ~125 KB of internal RAM for a moment.
 

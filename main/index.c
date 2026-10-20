@@ -185,8 +185,6 @@ static bool open_db(void) {
 }
 
 static bool open_l(void) {
-    static const sqlite3_mem_methods mem = { m_malloc, m_free, m_realloc, m_size, m_roundup, m_init, m_shutdown, NULL };
-    sqlite3_config(SQLITE_CONFIG_MALLOC, &mem);   /* before SQLite's first use */
     if (mkdir(DIR_, 0777) && errno != EEXIST) {
         ESP_LOGW(TAG, "can't make %s", DIR_);
         set_summary("No index: the card can't be written");
@@ -511,11 +509,30 @@ static void set_fav_l(const char *path, bool fav) {
 
 /* ---- the public calls: each under the lock ---- */
 
+
 #define LOCK()   (s_lock ? xSemaphoreTakeRecursive(s_lock, portMAX_DELAY) : 0)
 #define UNLOCK() (s_lock ? xSemaphoreGiveRecursive(s_lock) : 0)
 
+/* SQLite's setup (its memory from PSRAM) and the lock, once: whichever
+   database opens first (this, or the notes') */
+static void sqlite_setup(void) {
+    static bool done;
+    if (done) return;
+    static const sqlite3_mem_methods mem = { m_malloc, m_free, m_realloc, m_size, m_roundup, m_init, m_shutdown, NULL };
+    sqlite3_config(SQLITE_CONFIG_MALLOC, &mem);   /* before SQLite's first use */
+    s_lock = xSemaphoreCreateRecursiveMutex();
+    done = true;
+}
+
+void index_sqlite_lock(void) {
+    sqlite_setup();
+    LOCK();
+}
+
+void index_sqlite_unlock(void) { UNLOCK(); }
+
 bool index_open(void) {
-    if (!s_lock) s_lock = xSemaphoreCreateRecursiveMutex();
+    sqlite_setup();
     LOCK();
     bool r = open_l();
     UNLOCK();

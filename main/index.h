@@ -56,5 +56,9 @@ bool index_next_unthumbed(const char *after, char *path, size_t n);
 /* favourites: kept in the index (a rescan keeps them) */
 void index_set_fav(const char *path, bool fav);
 bool index_is_fav(const char *path);
+/* SQLite is built for one thread (SQLITE_THREADSAFE=0): every SQLite call,
+ * this index's or another database's (notes.c), holds this lock */
+void index_sqlite_lock(void);
+void index_sqlite_unlock(void);
 /* goes up each time a thumbnail is stored: the Gallery redraws */
 uint32_t index_thumbs_version(void);
