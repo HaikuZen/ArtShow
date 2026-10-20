@@ -11,10 +11,12 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi), NVS, then (under the LVGL lock) the slideshow, the clock page, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi and NTP |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, the clock and weather pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather task |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
+| `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
+| `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
 | `main/slideshow.c/.h` | the microSD picture slideshow: see Slideshow below |
 | `main/transition.c/.h` | the change from one picture to the next: see Slideshow below |
 | `main/brightness_ui.c/.h` | the backlight: a button bottom left opens a slider (folds away after 5 s untouched); the level is kept in NVS (`artshow`/`bright`) |
@@ -193,3 +195,51 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   current month (its arrows show others meanwhile).
 - LVGL takes its memory from the system heap (`CONFIG_LV_USE_CLIB_MALLOC`), not
   a 64 KB pool: drawing the clock page takes ~125 KB of internal RAM for a moment.
+
+## Weather
+
+- `main/weather.c`: the settings are in `/sdcard/config.json`, read once at
+  boot (a changed card needs a restart anyway: no remounts). No file: a template
+  is written there, and the page says to fill it in on a computer:
+  ```json
+  { "weather": { "provider": "openweathermap", "location": "Rome,IT", "place_name": "",
+                 "units": "metric", "lang": "en", "refresh_minutes": 30,
+                 "api_keys": { "openweathermap": "", "weatherapi": "", "weatherbit": "", "visualcrossing": "" } } }
+  ```
+  `provider`: `openweathermap`, `weatherapi`, `weatherbit` or `visualcrossing`.
+  `location`: a city ("Rome,IT") or "lat,lon" (every provider takes it; set
+  `place_name` then, or Visual Crossing shows the numbers). `units`: `metric`
+  (°C, km/h) or `imperial` (°F, mph).
+- Every provider with a key can be picked on the page (a dropdown left of the
+  refresh button, shown with two keys or more). The pick is kept in NVS
+  (`artshow`/`wxprov`) and wins over `provider` at the next boot; `provider`
+  counts again if the picked one loses its key. `weather_config_load` reads
+  NVS, so it runs after `nvs_init`. The page asks, the weather task switches
+  (`weather_use_provider` only posts the wish).
+- **The API keys stay on the card.** Never put one in a source file, and never
+  log a URL: the key is in it.
+- Each provider's answer becomes one `weather_t` (now + up to 7 days), so the
+  page doesn't know which one it was:
+  - OpenWeatherMap (free plan): `/data/2.5/weather` + `/data/2.5/forecast`
+    (5 days in 3-hour steps, grouped into days in the place's time; a day's sky
+    is the step nearest 13:00).
+  - WeatherAPI: `forecast.json`, one call; 3 days on the free plan. It's the
+    one with hours on the free plan: every hour of each day comes (~70 KB), and
+    the next 24 fill `w->hour[]`, the page's hourly strip (a row to swipe
+    sideways). The others leave `nhours` 0: the strip hides and the day cards
+    move up. cJSON allocates in PSRAM (`cJSON_InitHooks`): that answer is ~3000
+    nodes, ~200 KB of internal RAM otherwise.
+  - Weatherbit: `current` + `forecast/daily`. Free: 50 calls a day, so it
+    refreshes every 60 minutes at least.
+  - Visual Crossing: one `timeline` call, only the fields shown (`elements=`),
+    `iconSet=icons2` for thunder and showers.
+  OpenWeatherMap's and Weatherbit's condition codes share one scheme (`code_kind`).
+- HTTPS through `esp_http_client` with IDF's certificate bundle. JSON with
+  `espressif/cjson` (IDF 6 has no `json` component). The task starts once Wi-Fi
+  is up, refreshes every `refresh_minutes` (and on the page's refresh button,
+  top right), and after a failure retries in 1, 2, 4 ... minutes. A failure
+  keeps the last forecast on show, with the error in orange under the place.
+- `main/weather_icon.c`: the icons are drawn in the draw event on a 100x100 grid
+  (circles, rounded bars, lines), so they scale to any size and look the same
+  for every provider. The moon's bite takes the color of the first opaque
+  background above it.

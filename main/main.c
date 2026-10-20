@@ -1,5 +1,6 @@
 /* main.c - ArtShow: the pictures on the microSD card as a full-screen
- * slideshow, with the menu (top left: the slideshow, a clock page), the Wi-Fi
+ * slideshow, with the menu (top left: the slideshow, a clock page, the
+ * weather), the Wi-Fi
  * button (bottom right) and the brightness slider (bottom left) over it. */
 #include "board.h"
 #include "esp_lvgl_port.h"
@@ -7,6 +8,8 @@
 #include "slideshow.h"
 #include "brightness_ui.h"
 #include "clock_page.h"
+#include "weather.h"
+#include "weather_page.h"
 #include "menu.h"
 #include "time_sync.h"
 #include "nvs_flash.h"
@@ -32,17 +35,20 @@ static void nvs_init(void) {
 void app_main(void) {
     ESP_LOGI(TAG, "ArtShow");
     board_init();
-    slideshow_mount();         /* before wifi_start: see slideshow.h */
+    bool card = slideshow_mount();   /* before wifi_start: see slideshow.h */
     nvs_init();
+    weather_config_load(card);       /* config.json on the card; the picked provider in NVS */
     if (lvgl_port_lock(0)) {   /* every LVGL call from outside the LVGL task holds the lock */
         lv_obj_t *scr = lv_screen_active();
         slideshow_start(scr);
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
+        lv_obj_t *weather = weather_page_create(scr);
         wifi_ui_create(scr);
         brightness_ui_create(scr);
         const menu_page_t pages[] = {
             { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown },
             { LV_SYMBOL_BELL "  Clock", clock, clock_page_shown },
+            { LV_SYMBOL_CHARGE "  Weather", weather, NULL },
         };
         menu_create(scr, pages, sizeof pages / sizeof pages[0]);
         lvgl_port_unlock();
@@ -51,4 +57,5 @@ void app_main(void) {
     audio_beep(880, 150);
     wifi_start();
     time_sync_start();         /* after wifi_start: it inits esp_netif */
+    weather_start(weather_page_update);
 }
