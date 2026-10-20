@@ -12,6 +12,7 @@
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "board.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -25,7 +26,7 @@
 static const int STEPS[] = { 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1800, 3600 };
 #define N_STEPS (int)(sizeof STEPS / sizeof STEPS[0])
 
-static lv_obj_t *s_interval_v, *s_fade_v, *s_from_v, *s_to_v, *s_level_v, *s_hours, *s_sun_info;
+static lv_obj_t *s_interval_v, *s_fade_v, *s_from_v, *s_to_v, *s_level_v, *s_hz_v, *s_hours, *s_sun_info;
 static lv_obj_t *s_folders, *s_about, *s_index;
 static char s_index_was[96];   /* the summary on show: a change after a scan lists the folders again */
 static lv_timer_t *s_about_timer;
@@ -230,6 +231,16 @@ static void level_cb(lv_event_t *e) {
     if (s_built) night_refresh();
 }
 
+/* the backlight's switching: the slider's steps */
+static const int HZ[] = { 1000, 2000, 5000, 10000, 20000, 30000 };
+#define N_HZ (int)(sizeof HZ / sizeof HZ[0])
+
+static void hz_cb(lv_event_t *e) {
+    g_settings.backlight_hz = HZ[slider_value(e)];
+    lv_label_set_text_fmt(s_hz_v, "%d kHz", (int)(g_settings.backlight_hz / 1000));
+    if (s_built) board_set_backlight_hz(g_settings.backlight_hz);   /* at once: compare by eye */
+}
+
 /* ---- about ---- */
 
 static void about_cb(lv_timer_t *t) {
@@ -326,6 +337,10 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     slider_row(s_hours, "Until", 0, 47, g_settings.night_to / 30, to_cb, &s_to_v);
     slider_row(right, "The screen at night", 0, 30, g_settings.night_level, level_cb, &s_level_v);
     note(right, "Dark once it's left untouched for 2 minutes; a touch lights it again.");
+    int hz = N_HZ - 1;
+    while (hz > 0 && HZ[hz] > g_settings.backlight_hz) hz--;
+    slider_row(right, "Backlight switching", 0, N_HZ - 1, hz, hz_cb, &s_hz_v);
+    note(right, "If the screen flickers when it's dim, try another speed: it changes at once.");
 
     heading(right, "About");
     s_about = label(right, &art_font_16, TEXT, "");

@@ -69,6 +69,10 @@ static void backlight_init(void) {
     ESP_ERROR_CHECK(ledc_channel_config(&cc));   /* dark until the first frame is in */
 }
 
+void board_set_backlight_hz(uint32_t hz) {
+    if (ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, hz) != ESP_OK) ESP_LOGW(TAG, "backlight at %lu Hz: no", (unsigned long)hz);
+}
+
 void board_set_brightness(int pct) {
     uint32_t duty = pct <= 0 ? 0 : BL_DUTY_FLOOR + (uint32_t)(pct > 100 ? 100 : pct) * (2047 - BL_DUTY_FLOOR) / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);

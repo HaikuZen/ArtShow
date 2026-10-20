@@ -36,6 +36,7 @@ settings_t g_settings = {
     .night_from = 23 * 60,
     .night_to = 7 * 60,
     .night_level = 0,
+    .backlight_hz = 30000,   /* board.c's at boot */
 };
 
 typedef struct {

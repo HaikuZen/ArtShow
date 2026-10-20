@@ -52,6 +52,7 @@ void app_main(void) {
     bool card = slideshow_mount();   /* before wifi_start: see slideshow.h */
     nvs_init();
     settings_load();                 /* before the slideshow: its order, timing, folders */
+    board_set_backlight_hz(g_settings.backlight_hz);
     net_init();
     weather_config_load(card);       /* config.json on the card; the picked provider in NVS */
     if (lvgl_port_lock(0)) {   /* every LVGL call from outside the LVGL task holds the lock */

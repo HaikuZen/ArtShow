@@ -19,6 +19,7 @@ typedef struct {
     int32_t night_to;
     int32_t night_level;    /* the backlight at night, %; 0: off */
     bool favourites_only;   /* the Gallery's stars; none starred: all */
+    int32_t backlight_hz;   /* the backlight's PWM: some drivers flicker when dim at one, not another */
 } settings_t;
 
 extern settings_t g_settings;
