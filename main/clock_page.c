@@ -7,6 +7,8 @@
 #include <time.h>
 
 #define FACE        420     /* the clock's diameter */
+#define FACE_PAD    14      /* between the rim and the ticks */
+#define RIM_W       6
 #define BG          0x0D1B2A
 #define FACE_BG     0x1B263B
 #define RIM         0x415A77
@@ -23,6 +25,10 @@ static const char *s_hours[] = { "12", "1", "2", "3", "4", "5", "6", "7", "8", "
 
 static lv_obj_t *hand(uint32_t color, int width) {
     lv_obj_t *l = lv_line_create(s_scale);
+    /* LVGL puts the needle's pivot at half the scale's full size, but counts
+       from inside its padding and rim: back by those, or it's off-center */
+    lv_obj_set_style_translate_x(l, -(FACE_PAD + RIM_W), 0);
+    lv_obj_set_style_translate_y(l, -(FACE_PAD + RIM_W), 0);
     lv_obj_set_style_line_width(l, width, 0);
     lv_obj_set_style_line_color(l, lv_color_hex(color), 0);
     lv_obj_set_style_line_rounded(l, true, 0);
@@ -62,6 +68,7 @@ static void update(bool force) {
 
 static void tick_cb(lv_timer_t *t) { update(false); }
 
+
 void clock_page_shown(bool shown) {
     if (shown) {
         update(true);
@@ -87,9 +94,9 @@ static void face_create(void) {
     lv_obj_set_style_bg_color(s_scale, lv_color_hex(FACE_BG), 0);
     lv_obj_set_style_bg_opa(s_scale, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(s_scale, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(s_scale, 6, 0);
+    lv_obj_set_style_border_width(s_scale, RIM_W, 0);
     lv_obj_set_style_border_color(s_scale, lv_color_hex(RIM), 0);
-    lv_obj_set_style_pad_all(s_scale, 14, 0);
+    lv_obj_set_style_pad_all(s_scale, FACE_PAD, 0);
     lv_obj_set_style_arc_width(s_scale, 0, LV_PART_MAIN);       /* no circle line under the ticks */
     lv_obj_set_style_length(s_scale, 22, LV_PART_INDICATOR);    /* hours */
     lv_obj_set_style_line_width(s_scale, 5, LV_PART_INDICATOR);
