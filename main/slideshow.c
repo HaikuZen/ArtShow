@@ -7,6 +7,7 @@
 #include "slideshow.h"
 #include "transition.h"
 #include "settings.h"
+#include "index.h"
 #include "board_pins.h"
 #include "driver/jpeg_decode.h"
 #include "driver/sdmmc_host.h"
@@ -23,6 +24,8 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include <dirent.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -41,6 +44,7 @@ static const char *TAG = "slides";
 #define NOTE_NEXT    1                    /* task notifications from the tap handler */
 #define NOTE_PREV    2
 #define NOTE_TAP     3                    /* the middle third */
+#define NOTE_LIST    4                    /* the list changed: a rescan, or a picture added */
 #define ALIGN_UP(v, a) (((v) + (a) - 1) / (a) * (a))
 
 static lv_obj_t *s_view, *s_msg;
@@ -49,6 +53,13 @@ static uint16_t *s_out;            /* screen-sized RGB565: on show (transition.c
 static uint16_t *s_next;           /* screen-sized RGB565: the next picture, loaded ahead */
 static volatile bool s_paused;     /* another page covers the slideshow */
 static volatile bool s_asleep;     /* the screen is off for the night */
+static volatile bool s_want_rescan, s_list_changed;
+static SemaphoreHandle_t s_list_lock;   /* s_files' strings, against readers in other tasks */
+static QueueHandle_t s_added;      /* paths put on the card meanwhile (Artwork of the Day) */
+#define MAX_BAD 64
+static const char *s_bad[MAX_BAD];  /* can't be shown: left out this session (and in the index) */
+static int s_nbad;
+static const char *s_why;          /* why the last load() failed, if it's the picture's fault */
 static volatile int s_cur = -1;    /* the picture on show, in s_files */
 static TaskHandle_t s_task;
 static sdmmc_card_t *s_card;
@@ -128,46 +139,20 @@ bool slideshow_mount(void) {
 
 /* ---- the picture list ---- */
 
+/* s_files holds MAX_FILES pointers from the start: it never moves, readers
+   in other tasks only take the lock against the strings being freed */
 static void free_list(void) {
     for (int i = 0; i < s_nfiles; i++) free(s_files[i]);
-    free(s_files);
-    s_files = NULL;
     s_nfiles = 0;
-}
-
-static bool is_jpeg(const char *name) {
-    const char *e = strrchr(name, '.');
-    return e && (!strcasecmp(e, ".jpg") || !strcasecmp(e, ".jpeg"));
+    s_nbad = 0;
 }
 
 static void add_file(const char *path) {
-    if (s_nfiles % 64 == 0) {
-        char **f = heap_caps_realloc(s_files, (s_nfiles + 64) * sizeof *f, MALLOC_CAP_SPIRAM);
-        if (!f) return;
-        s_files = f;
-    }
+    if (s_nfiles >= MAX_FILES) return;
     char *p = heap_caps_malloc(strlen(path) + 1, MALLOC_CAP_SPIRAM);
     if (!p) return;
     strcpy(p, path);
     s_files[s_nfiles++] = p;
-}
-
-static void scan_dir(const char *dir, int depth) {
-    DIR *d = opendir(dir);
-    if (!d) return;
-    char path[512];
-    struct dirent *e;
-    while ((e = readdir(d)) && s_nfiles < MAX_FILES) {
-        /* dot files: macOS leaves a "._name.jpg" next to every picture */
-        if (e->d_name[0] == '.' || !strcasecmp(e->d_name, "System Volume Information")) continue;
-        if (snprintf(path, sizeof path, "%s/%s", dir, e->d_name) >= (int)sizeof path) continue;
-        if (e->d_type == DT_DIR) {
-            if (depth < MAX_DEPTH) scan_dir(path, depth + 1);
-        } else if (is_jpeg(e->d_name)) {
-            add_file(path);
-        }
-    }
-    closedir(d);
 }
 
 static int by_name(const void *a, const void *b) {
@@ -189,10 +174,26 @@ static void reorder(void) {
     else qsort(s_files, s_nfiles, sizeof *s_files, by_name);
 }
 
-static void list_pictures(void) {
+/* the pictures: from the index (walking the card into it if it's empty),
+   or, without one, from a walk of the card */
+static void list_pictures(bool rescan) {
+    xSemaphoreTake(s_list_lock, portMAX_DELAY);
+    char shown[256] = "";   /* the picture on show: found again in the new list */
+    if (s_cur >= 0 && s_cur < s_nfiles) snprintf(shown, sizeof shown, "%s", s_files[s_cur]);
+    s_cur = -1;
     free_list();
-    scan_dir(MOUNT, 0);
+    if (!s_files) s_files = heap_caps_calloc(MAX_FILES, sizeof *s_files, MALLOC_CAP_SPIRAM);
+    if (s_files && index_is_open()) {
+        if (rescan) index_scan();
+        s_nfiles = index_list(s_files, MAX_FILES);
+        if (!s_nfiles && !rescan && index_scan() > 0) s_nfiles = index_list(s_files, MAX_FILES);
+    } else if (s_files) {
+        index_walk(add_file);
+    }
     reorder();
+    for (int k = 0; shown[0] && k < s_nfiles; k++)
+        if (!strcmp(s_files[k], shown)) s_cur = k;
+    xSemaphoreGive(s_list_lock);
     ESP_LOGI(TAG, "%d pictures on the card%s", s_nfiles, s_nfiles >= MAX_FILES ? " (the most it lists)" : "");
 }
 
@@ -207,6 +208,7 @@ static bool read_file(const char *path, size_t *len) {
     fseek(f, 0, SEEK_SET);
     bool ok = size > 0 && size <= MAX_JPEG;
     if (!ok) ESP_LOGW(TAG, "%s: %ld bytes, skipped", path, size);
+    if (!ok) s_why = size > 0 ? "too big" : "empty";
     if (ok && (size_t)size > s_in_cap) {
         free(s_in);
         const jpeg_decode_memory_alloc_cfg_t mc = { .buffer_direction = JPEG_DEC_ALLOC_INPUT_BUFFER };
@@ -346,11 +348,16 @@ static void scale(const uint16_t *src, int stride, int sx, int sy, int sw, int s
 static bool load(const char *path, uint16_t *dst) {
     int64_t t0 = esp_timer_get_time();
     size_t len;
+    s_why = NULL;   /* a failure is the card's, unless said otherwise */
     if (!read_file(path, &len)) return false;
     int64_t t1 = esp_timer_get_time();
 
     jpeg_decode_picture_info_t info;
-    if (jpeg_decoder_get_info(s_in, len, &info) != ESP_OK) { ESP_LOGW(TAG, "%s: not a JPEG", path); return false; }
+    if (jpeg_decoder_get_info(s_in, len, &info) != ESP_OK) {
+        ESP_LOGW(TAG, "%s: not a JPEG", path);
+        s_why = "not a JPEG";
+        return false;
+    }
     int w = info.width, h = info.height, stride = 0;
     /* how far it can shrink while decoding (1/2, 1/4, 1/8) and still cover its place */
     place_t p = place(w, h);
@@ -364,6 +371,7 @@ static bool load(const char *path, uint16_t *dst) {
         how = "software";
         if (!decode_sw(path, len, shift, &w, &h)) {
             ESP_LOGW(TAG, "%s: %"PRIu32"x%"PRIu32" not shown", path, info.width, info.height);
+            s_why = "can't be decoded (progressive, or damaged)";
             return false;
         }
         stride = w;
@@ -376,6 +384,7 @@ static bool load(const char *path, uint16_t *dst) {
     ESP_LOGI(TAG, "%s: %"PRIu32"x%"PRIu32" (%s %dx%d), read %d ms, decode %d ms, scale %d ms", path,
              info.width, info.height, how, w, h, (int)((t1 - t0) / 1000), (int)((t2 - t1) / 1000),
              (int)((esp_timer_get_time() - t2) / 1000));
+    index_good(path, info.width, info.height);
     return true;
 }
 
@@ -416,12 +425,38 @@ static void tap_cb(lv_event_t *e) {
 /* ---- the task ---- */
 
 /* a tap within ms (NOTE_*), or 0. Taps in the middle count only with any */
+/* the requests from other tasks, done here: the index is this task's */
+static bool serve_requests(void) {
+    bool changed = false;
+    char path[256];
+    while (s_added && xQueueReceive(s_added, path, 0) == pdTRUE) {   /* Artwork of the Day's saves */
+        index_add(path);
+        xSemaphoreTake(s_list_lock, portMAX_DELAY);
+        add_file(path);
+        xSemaphoreGive(s_list_lock);
+        ESP_LOGI(TAG, "%s: added", path);
+    }
+    if (s_want_rescan) {
+        s_want_rescan = false;
+        list_pictures(true);
+        changed = true;
+    }
+    if (changed) s_list_changed = true;
+    return changed;
+}
+
 static int wait_note(int ms, bool any) {
     int64_t end = esp_timer_get_time() + ms * 1000LL;
     for (;;) {
+        /* a request whose note a tap overwrote: served all the same */
+        if ((s_want_rescan || (s_added && uxQueueMessagesWaiting(s_added))) && serve_requests()) return NOTE_LIST;
         int left = (int)((end - esp_timer_get_time()) / 1000);
         uint32_t note = 0;
         if (left <= 0 || xTaskNotifyWait(0, UINT32_MAX, &note, pdMS_TO_TICKS(left)) != pdTRUE) return 0;
+        if (note == NOTE_LIST) {
+            if (serve_requests()) return NOTE_LIST;   /* a new list: the caller starts over */
+            continue;
+        }
         if (any || note != NOTE_TAP) return (int)note;
     }
 }
@@ -434,6 +469,8 @@ static void top_folder(const char *path, char *out, size_t n) {
 }
 
 static bool playable(int k) {
+    for (int b = 0; b < s_nbad; b++)
+        if (s_bad[b] == s_files[k]) return false;
     char f[128];
     top_folder(s_files[k], f, sizeof f);
     return settings_folder_on(f);
@@ -460,6 +497,10 @@ static bool prepare(int *k, int dir) {
     settle();
     for (int fails = 0; fails < s_nfiles; fails++) {
         if (load(s_files[*k], s_next)) return true;
+        if (s_why) {   /* the picture's fault: out of the index's list, and out this session */
+            index_bad(s_files[*k], s_why);
+            if (s_nbad < MAX_BAD) s_bad[s_nbad++] = s_files[*k];
+        }
         *k = step(*k, dir);
     }
     return false;
@@ -480,17 +521,26 @@ static void slideshow_task(void *arg) {
         vTaskDelete(NULL);
     }
     if (!s_card) stop(LV_SYMBOL_SD_CARD "  Insert a microSD card with JPEG pictures,\nthen tap the screen");
-    list_pictures();
-    if (!s_nfiles) stop(LV_SYMBOL_IMAGE "  No JPEG pictures on the card (.jpg or .jpeg, in any folder)\n"
-                        "Put some on it, then tap the screen");
+    index_open();   /* this task's: SQLite is built for one */
+    list_pictures(false);
 
-    int next = step(s_nfiles - 1, 1), dir = 1;   /* the first in a folder that's on */
+    int next = 0, dir = 1;
     bool ready = false;   /* picture next is in the hidden buffer already */
+    s_list_changed = true;
     for (;;) {
+        if (s_list_changed) {   /* a new list (boot, a rescan): from its first picture in a folder that's on */
+            s_list_changed = false;
+            if (!s_nfiles) stop(LV_SYMBOL_IMAGE "  No JPEG pictures on the card (.jpg or .jpeg, in any folder)\n"
+                                "Put some on it, then tap the screen");
+            next = step(s_nfiles - 1, 1);
+            dir = 1;
+            ready = false;
+        }
         if (!ready && !prepare(&next, dir))   /* none loads: the card is gone, or all unreadable */
             stop(LV_SYMBOL_WARNING "  None of the pictures can be shown (baseline JPEGs only)\n"
                  "Check the card, then tap the screen");
         while (s_paused || s_asleep) wait_note(500, false);
+        if (s_list_changed) continue;   /* rescanned meanwhile: what's ready may be gone */
         show();
         int cur = s_cur = next;
         int64_t due = esp_timer_get_time() + g_settings.interval_s * 1000000LL;
@@ -556,19 +606,36 @@ void slideshow_start(lv_obj_t *parent) {
     lv_obj_add_event_cb(parent, tap_cb, LV_EVENT_CLICKED, NULL);
     /* idle priority: a software decode runs ~6 s without a break, and at any
        higher one core 1's idle task starves and the task watchdog complains */
-    xTaskCreatePinnedToCore(slideshow_task, "slides", 8192, NULL, tskIDLE_PRIORITY, &s_task, 1);
+    s_list_lock = xSemaphoreCreateMutex();
+    s_added = xQueueCreate(4, 256);
+    /* 16 KB: SQLite's calls are deeper than the decoders' */
+    xTaskCreatePinnedToCore(slideshow_task, "slides", 16 * 1024, NULL, tskIDLE_PRIORITY, &s_task, 1);
 }
 
 bool slideshow_now(char *path, size_t n) {
+    xSemaphoreTake(s_list_lock, portMAX_DELAY);
     int k = s_cur;
     snprintf(path, n, "%s", k >= 0 && k < s_nfiles ? s_files[k] : "");
+    xSemaphoreGive(s_list_lock);
     return path[0];
+}
+
+void slideshow_rescan(void) {
+    s_want_rescan = true;
+    if (s_task) xTaskNotify(s_task, NOTE_LIST, eSetValueWithOverwrite);
+}
+
+void slideshow_added(const char *path) {
+    char p[256];
+    snprintf(p, sizeof p, "%s", path);
+    if (s_added && xQueueSend(s_added, p, 0) == pdTRUE && s_task) xTaskNotify(s_task, NOTE_LIST, eSetValueWithOverwrite);
 }
 
 const uint16_t *slideshow_screen(void) { return s_out; }
 
 int slideshow_folders(char names[][64], int *counts, int max) {
     int n = 0;
+    xSemaphoreTake(s_list_lock, portMAX_DELAY);
     for (int k = 0; k < s_nfiles; k++) {
         char f[64];
         top_folder(s_files[k], f, sizeof f);
@@ -581,6 +648,7 @@ int slideshow_folders(char names[][64], int *counts, int max) {
         }
         counts[i]++;
     }
+    xSemaphoreGive(s_list_lock);
     return n;
 }
 

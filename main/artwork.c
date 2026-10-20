@@ -290,8 +290,11 @@ static void save(char *msg, size_t n) {
     bool too_big = false;
     if (s_full[0]) {
         size_t got = net_download(s_full, "The Met's pictures", path, SLIDESHOW_MAX_JPEG, &too_big, save_progress, msg, n);
-        if (got) snprintf(msg, n, "Saved to the card, in \"Artwork of the Day\" (%u KB): in the slideshow after a restart",
-                          (unsigned)(got / 1024));
+        if (got) {
+            snprintf(msg, n, "Saved to the card, in \"Artwork of the Day\" (%u KB): in the slideshow now",
+                     (unsigned)(got / 1024));
+            slideshow_added(path);
+        }
         if (!too_big) return;
         /* more than the slideshow reads: the small one, then */
     }
@@ -302,8 +305,9 @@ static void save(char *msg, size_t n) {
         remove(path);
         snprintf(msg, n, "Can't write it on the card");
     } else {
-        snprintf(msg, n, "Saved to the card, in \"Artwork of the Day\" (small: %s): in the slideshow after a restart",
+        snprintf(msg, n, "Saved to the card, in \"Artwork of the Day\" (small: %s): in the slideshow now",
                  too_big ? "the full size is too big for the slideshow" : "no bigger one");
+        slideshow_added(path);
     }
 }
 

@@ -18,6 +18,13 @@ void slideshow_start(lv_obj_t *parent);
 /* hold the next picture back while another page covers the slideshow (the
  * next one still loads); resumed, it shows at once */
 void slideshow_pause(bool pause);
+/* walk the card again and bring the index (index.c) up to date; the
+ * slideshow's task does it, between pictures; a new list starts from its
+ * first picture */
+void slideshow_rescan(void);
+/* a picture just put on the card (Artwork of the Day): into the index and
+ * the list, without a rescan */
+void slideshow_added(const char *path);
 /* hold the pictures while the screen is off for the night (night.c) */
 void slideshow_sleep(bool sleep);
 /* the file of the picture on show (its full path); false: none yet */

@@ -26,6 +26,6 @@ typedef void (*artwork_cb_t)(const artwork_t *a, const char *status);
 void artwork_start(artwork_cb_t cb);
 /* a random painting instead (the day's again tomorrow) */
 void artwork_another(void);
-/* the picture on show into "Artwork of the Day" on the card (the slideshow
- * takes it at the next restart); the result comes as a status */
+/* the picture on show into "Artwork of the Day" on the card (and into the
+ * slideshow's index and list); the result comes as a status */
 void artwork_save(void);

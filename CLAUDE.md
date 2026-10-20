@@ -19,6 +19,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
 | `main/sun_moon.c/.h`, `main/astro.c/.h` | the Sun and Moon page, and the astronomy under it: see Sun and Moon below |
+| `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
 | `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page, and night mode: see Settings below |
 | `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
 | `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file; redirects followed; a connection kept for a run of calls to one server), JSON path helpers, cJSON in PSRAM |
@@ -126,7 +127,8 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 ## Slideshow
 
 - `main/slideshow.c`: one task mounts the microSD card on `/sdcard`, lists every
-  `.jpg`/`.jpeg` (any folder, 4 deep, up to 2000; dot files skipped), decodes
+  `.jpg`/`.jpeg` from the index (Index below: any folder, 4 deep, up to 2000;
+  dot files skipped), decodes
   each with the P4's hardware JPEG engine into PSRAM, box-scales it into a
   1024x600 RGB565 buffer (`s_next`), and `transition.c` moves the one on show
   (`s_out`, the only `lv_image`) to it. The next picture loads into `s_next`
@@ -352,3 +354,33 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 - Artwork of the Day's Save keeps a full-size picture only if it's within
   `SLIDESHOW_MAX_JPEG` (12 MB: the slideshow reads a file whole), else the
   small one.
+
+## Index
+
+- `main/index.c`: the pictures in SQLite, `/sdcard/.artshow/index.db` (a dot
+  folder: the walk skips it): `pictures(path, folder, size, mtime, width,
+  height, status, note, added, seen)` and `meta`. The slideshow lists from it
+  at boot (~20 ms) instead of walking the card; an empty index is walked into
+  at once. The Settings page's Rescan walks the card again (87 pictures:
+  0.3-0.9 s): new ones in, gone ones out, a changed one (size or date) tried
+  again. A picture that can't be shown (not a JPEG, too big, progressive or
+  damaged; not an I/O error) is marked (status 2, note: why) and left out
+  until it changes. Its first good showing stores its size in pixels: no
+  write per picture after that (the card's wear). Artwork of the Day's Save
+  adds its picture at once (`slideshow_added`).
+- Only the slideshow's task touches SQLite (`SQLITE_THREADSAFE=0`): others
+  ask (`slideshow_rescan`, `slideshow_added`: a note and a queue) and read
+  the list under `s_list_lock`. `s_files` holds MAX_FILES pointers from the
+  start: it never moves.
+- `components/sqlite3/`: SQLite 3.54.1's amalgamation, unchanged (README:
+  the source and its hash; ~10 MB in git, ~520 KB in the app), with
+  `sqlite3_esp.c`, a VFS on POSIX calls (after SQLite's `test_demovfs.c`):
+  no locks (FAT has none; one task), no WAL, temp tables in memory, memory
+  from PSRAM (`SQLITE_CONFIG_MALLOC`). Its warnings are off (`-w`), as LVGL's.
+- `PRAGMA synchronous = FULL`: on FAT a file's size and clusters reach the
+  card only when it's synced or closed, and the board is reset, never closed.
+  With NORMAL the next boot read the database as "disk I/O error". A
+  database that can't be read is replaced by a new one, then walked into:
+  it's only an index.
+- The time zone is set first thing in `app_main` (`time_sync_tz`): the index
+  opens before the time sync starts, and its "scanned" time is local.

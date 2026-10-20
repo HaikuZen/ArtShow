@@ -27,9 +27,12 @@ static void got_ip_cb(void *arg, esp_event_base_t base, int32_t id, void *data) 
     esp_netif_sntp_start();
 }
 
-void time_sync_start(void) {
+void time_sync_tz(void) {
     setenv("TZ", CONFIG_ARTSHOW_TZ, 1);
     tzset();
+}
+
+void time_sync_start(void) {
     esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_ARTSHOW_NTP_SERVER);
     cfg.sync_cb = synced_cb;
     esp_err_t err = esp_netif_sntp_init(&cfg);

@@ -46,6 +46,7 @@ static void nvs_init(void) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "ArtShow");
+    time_sync_tz();            /* before anything shows or stores a local time */
     board_init();
     bool card = slideshow_mount();   /* before wifi_start: see slideshow.h */
     nvs_init();

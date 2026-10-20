@@ -6,6 +6,7 @@
 #include "settings.h"
 #include "night.h"
 #include "slideshow.h"
+#include "index.h"
 #include "wifi.h"
 #include "fonts/art_fonts.h"
 #include "esp_app_desc.h"
@@ -25,7 +26,8 @@ static const int STEPS[] = { 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 
 #define N_STEPS (int)(sizeof STEPS / sizeof STEPS[0])
 
 static lv_obj_t *s_interval_v, *s_fade_v, *s_from_v, *s_to_v, *s_level_v, *s_hours, *s_sun_info;
-static lv_obj_t *s_folders, *s_about;
+static lv_obj_t *s_folders, *s_about, *s_index;
+static char s_index_was[96];   /* the summary on show: a change after a scan lists the folders again */
 static lv_timer_t *s_about_timer;
 static char s_folder_names[MAX_FOLDERS][64];
 static bool s_built;   /* the sliders' first values aren't changes */
@@ -162,6 +164,23 @@ static void list_folders(void) {
     note(s_folders, "Pictures from the folders ticked. With none ticked, all of them.");
 }
 
+/* ---- the index ---- */
+
+static void rescan_cb(lv_event_t *e) {
+    lv_label_set_text(s_index, "Scanning the card...");
+    slideshow_rescan();
+}
+
+static void show_index(void) {
+    char sum[96];
+    index_summary(sum, sizeof sum);
+    if (!strcmp(sum, s_index_was)) return;
+    bool scanned = strstr(s_index_was, "Scanning") && !strstr(sum, "Scanning");
+    snprintf(s_index_was, sizeof s_index_was, "%s", sum);
+    lv_label_set_text(s_index, sum);
+    if (scanned) list_folders();   /* new folders, or gone ones */
+}
+
 /* ---- night ---- */
 
 static void show_night(void) {
@@ -214,6 +233,7 @@ static void level_cb(lv_event_t *e) {
 /* ---- about ---- */
 
 static void about_cb(lv_timer_t *t) {
+    show_index();
     char ssid[40], ip[20];
     bool on = wifi_info(ssid, sizeof ssid, ip, sizeof ip);
     const esp_app_desc_t *app = esp_app_get_description();
@@ -268,6 +288,19 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     heading(left, "Folders");
     s_folders = box(left, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_folders, 10, 0);
+
+    /* the card's index (index.c) */
+    heading(left, "Card index");
+    s_index = note(left, "");
+    lv_obj_set_style_text_color(s_index, lv_color_hex(TEXT), 0);
+    note(left, "New pictures on the card show after a rescan (pictures saved from Artwork of the Day show at once). "
+               "Pictures that can't be shown are left out until they change.");
+    lv_obj_t *b = lv_button_create(left);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x415A77), 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_t *bl = label(b, &art_font_20, TEXT, "Rescan the card");
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(b, rescan_cb, LV_EVENT_CLICKED, NULL);
 
     /* night, and about */
     lv_obj_t *right = column(page, 528, 472);
