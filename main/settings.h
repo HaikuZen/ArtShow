@@ -20,6 +20,8 @@ typedef struct {
     int32_t night_level;    /* the backlight at night, %; 0: off */
     bool favourites_only;   /* the Gallery's stars; none starred: all */
     int32_t backlight_hz;   /* the backlight's PWM: some drivers flicker when dim at one, not another */
+    int32_t gen_mode;       /* the Generative page: one piece (gen_algos' index), or -1: all in turn */
+    bool gen_hold;          /* ... a finished piece stays till Next */
 } settings_t;
 
 extern settings_t g_settings;

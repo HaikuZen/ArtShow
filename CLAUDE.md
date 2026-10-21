@@ -439,23 +439,37 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 
 ## Generative
 
-- `main/gen_art.c`: three pieces painting into a 1024x600 RGB565 canvas a
+- `main/gen_art.c`: six pieces painting into a 1024x600 RGB565 canvas a
   slice at a time, each deterministic from its seed (the caption's number):
   a flow field (2500 particles on two octaves of Perlin noise, faint alpha
-  trails; ~40 s), a Clifford or De Jong attractor (points counted per pixel,
-  a log tone map through the palette, redrawn each second; a minute of
-  painting: ~26 M points at ~0.44 M/s, ~100 s in all), Hitomezashi (random
-  row and column bits, the regions two-coloured by parity across stitches,
-  revealed row by row in ~20 s). An attractor's settings are tried first: a
-  trial run must cover enough of a coarse grid, else other settings.
-  Rendered on the computer before the board (the same file, a PPM).
+  trails; ~30 s), a Clifford or De Jong attractor (points counted per pixel,
+  a log tone map through the palette, redrawn each second; 30 M points or
+  50 s of painting, ~65 s in all), Hitomezashi (random row and column bits,
+  the regions two-coloured by parity across stitches; ~20 s), stained glass
+  (Voronoi round jittered grid seeds: only the 3 x 3 grid cells around a
+  pixel can hold its nearest two; lead where they're about as near, each
+  pane lighter at its middle; ~15 s), Mondrian (a rectangle split and split
+  again, 70 % of panes the lightest colour, the bars what's left; ~12 s),
+  Truchet (two quarter-circle arcs per tile, turned at random, soft edges;
+  ~15 s). An attractor's settings are tried first: a trial run must cover
+  enough of a coarse grid, else other settings. Each piece marks the rows it
+  painted (`gen_dirty`): the page redraws only those. Rendered on the
+  computer before the board (the same file, a PPM).
+- Speed, measured on the board (1 M each): `sinf` 6.3 s, a 4096-step table
+  0.25 s (so `fsin`/`fcos`, 25x); random `++` in a PSRAM buffer 0.9 s (now
+  the attractor's limit: ~0.65 M points/s, was 0.44 M); `logf` 0.35 us, so
+  the tone map is a table for counts 0..max, made once per refresh.
 - `main/generative.c`: the canvas full screen (an lv_image, 64-byte aligned
-  for the PPA), caption at the bottom, Next and Save top right. A task on
-  core 1 at priority 1 paints 25 ms, then gives a tick back (the idle task,
-  LVGL), invalidating 4 times a second; only while the page is shown. A
-  finished piece stays 90 s. The palette: the 5 commonest unlike colours of
-  the slideshow's picture (4 bits a channel; black bars skipped), darkest
-  first and made darker (the ground). Save: esp_new_jpeg at quality 90, 4:4:4
-  (thin lines keep their colour), ~280 KB, into `/sdcard/Generated/`, and
-  `slideshow_added`. While it's shown the slideshow's background thumbnails
-  wait (`slideshow_background(false)`): the CPU and PSRAM are this page's.
+  for the PPA), caption at the bottom. Top left: the kind (all in turn, or
+  one; `g_settings.gen_mode`). Top right: Recolour (the same seed in the
+  colours of a random painting: its Gallery thumbnail, `index_random_thumb`,
+  not a 4096 px decode), Hold (a finished piece stays till Next;
+  `g_settings.gen_hold`), Next, Save. A task on core 1 at priority 1 paints
+  25 ms, then gives a tick back (the idle task, LVGL), redrawing at most 4
+  times a second; only while the page is shown. A finished piece stays 90 s.
+  The palette: the 5 commonest unlike colours of the slideshow's picture (4
+  bits a channel; black bars skipped), darkest first and made darker (the
+  ground). Save: esp_new_jpeg at quality 90, 4:4:4 (thin lines keep their
+  colour), ~280 KB, into `/sdcard/Generated/`, and `slideshow_added`. While
+  it's shown the slideshow's background thumbnails wait
+  (`slideshow_background(false)`): the CPU and PSRAM are this page's.

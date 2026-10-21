@@ -14,6 +14,7 @@ typedef struct {
     uint32_t seed;
     char name[48];                /* "Clifford attractor 9273": the saved file's name */
     char caption[160];            /* the settings, for the screen */
+    int dirty_y0, dirty_y1;       /* the rows painted since the page last looked (y1 < y0: none) */
 } gen_canvas_t;
 
 typedef struct {
@@ -24,3 +25,9 @@ typedef struct {
 
 extern const gen_algo_t gen_algos[];
 extern const int gen_nalgos;
+
+/* rows y0..y1 painted: the page redraws only those */
+static inline void gen_dirty(gen_canvas_t *c, int y0, int y1) {
+    if (y0 < c->dirty_y0) c->dirty_y0 = y0;
+    if (y1 > c->dirty_y1) c->dirty_y1 = y1;
+}

@@ -1,11 +1,15 @@
 /* generative.c - the page: the canvas full screen (an lv_image of it), a
- * caption, Next and Save top right. A task paints in 25 ms slices (giving
+ * caption; the piece's kind (all in turn, or one) top left; Recolour, Hold,
+ * Next and Save top right. A task paints in 25 ms slices (giving
  * the CPU back between them) and redraws the screen 4 times a second; a
  * finished piece stays a minute and a half, then the next algorithm starts.
  * The palette: 5 colours of the picture the slideshow shows. */
 #include "generative.h"
 #include "gen_art.h"
 #include "slideshow.h"
+#include "settings.h"
+#include "index.h"
+#include "thumb.h"
 #include "board_pins.h"
 #include "fonts/art_fonts.h"
 #include "esp_jpeg_enc.h"
@@ -32,7 +36,8 @@ static lv_obj_t *s_page, *s_img, *s_caption, *s_status;
 static lv_image_dsc_t s_dsc;
 static gen_canvas_t s_c;
 static TaskHandle_t s_task;
-static volatile bool s_shown, s_want_next, s_want_save;
+static volatile bool s_shown, s_want_next, s_want_save, s_want_recolour;
+static lv_obj_t *s_hold_label;
 static int s_algo = -1;
 
 /* ---- the palette: from the slideshow's picture ---- */
@@ -49,13 +54,13 @@ static int dist2(uint32_t a, uint32_t b) {
 
 /* the most common colours (4 bits a channel), each unlike the ones before,
    darkest first; the darkest made darker still: the ground */
-static void palette_from(const uint16_t *src, uint32_t *pal) {
+static void palette_from(const uint16_t *src, int w, int h, int step, uint32_t *pal) {
     static uint16_t hist[4096];
     memset(hist, 0, sizeof hist);
     int n = 0;
-    for (int y = 4; y < LCD_V_RES; y += 8)
-        for (int x = 4; x < LCD_H_RES; x += 8) {
-            uint16_t p = src[y * LCD_H_RES + x];
+    for (int y = step / 2; y < h; y += step)
+        for (int x = step / 2; x < w; x += step) {
+            uint16_t p = src[y * w + x];
             int r = p >> 11, g = (p >> 5) & 63, b = p & 31;
             if (r + g / 2 + b < 3) continue;   /* the black bars around a picture */
             hist[(r >> 1) << 8 | (g >> 2) << 4 | (b >> 1)]++;
@@ -75,7 +80,7 @@ static void palette_from(const uint16_t *src, uint32_t *pal) {
             if (far) pal[k++] = c;
         }
     }
-    if (n < 100 || k < GEN_COLORS) {
+    if (n < 60 || k < GEN_COLORS) {
         memcpy(pal, DEFAULT_PAL, sizeof DEFAULT_PAL);
         return;
     }
@@ -147,22 +152,75 @@ static void save(void) {
 
 /* ---- the painter ---- */
 
-static void start_next(void) {
-    s_algo = (s_algo + 1) % gen_nalgos;
-    s_c.seed = esp_random() % 10000;
-    const uint16_t *screen = slideshow_screen();
-    if (screen) palette_from(screen, s_c.pal);
-    else memcpy(s_c.pal, DEFAULT_PAL, sizeof DEFAULT_PAL);
-    char who[96];
-    palette_source(who, sizeof who);
+/* the painter's name, from a picture's path ("Paul Signac - ...") */
+static void artist_of(const char *path, char *buf, size_t n) {
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    const char *sep = strstr(base, " - ");
+    snprintf(buf, n, "%.*s", sep ? (int)(sep - base) : 0, base);
+}
+
+/* the colours of another painting on the card: its Gallery thumbnail (a
+   4096 px picture would take seconds to decode) */
+static bool palette_random(char *who, size_t n) {
+    char path[256];
+    uint8_t *jpg;
+    size_t len;
+    static uint16_t *px;
+    if (!px) px = heap_caps_aligned_calloc(16, 176 * 112, sizeof *px, MALLOC_CAP_SPIRAM);
+    int w, h;
+    if (!px || !index_random_thumb(path, sizeof path, &jpg, &len)) return false;
+    bool ok = thumb_decode(jpg, len, px, &w, &h);
+    free(jpg);
+    if (!ok) return false;
+    palette_from(px, w, h, 2, s_c.pal);
+    artist_of(path, who, n);
+    return true;
+}
+
+/* a new piece: the next kind in turn (or the one picked), a new seed, the
+   colours of the slideshow's picture; recolour: the same piece, another
+   painting's colours */
+static void start_piece(bool recolour) {
+    char who[96] = "";
+    if (recolour) {
+        if (!palette_random(who, sizeof who)) {
+            lvgl_port_lock(0);
+            lv_label_set_text(s_status, "No thumbnails yet to take colours from (they come as pictures are shown)");
+            lv_obj_set_hidden(s_status, false);
+            lvgl_port_unlock();
+            return;
+        }
+    } else {
+        int mode = g_settings.gen_mode;
+        s_algo = mode >= 0 && mode < gen_nalgos ? mode : (s_algo + 1) % gen_nalgos;
+        s_c.seed = esp_random() % 10000;
+        const uint16_t *screen = slideshow_screen();
+        if (screen) palette_from(screen, LCD_H_RES, LCD_V_RES, 8, s_c.pal);
+        else memcpy(s_c.pal, DEFAULT_PAL, sizeof DEFAULT_PAL);
+        palette_source(who, sizeof who);
+    }
+    s_c.dirty_y0 = 1 << 30;
+    s_c.dirty_y1 = -1;
     gen_algos[s_algo].start(&s_c);
     lvgl_port_lock(0);
     if (who[0]) lv_label_set_text_fmt(s_caption, "%s   \xC2\xB7   colours from %s", s_c.caption, who);
     else lv_label_set_text(s_caption, s_c.caption);
     lv_obj_set_hidden(s_status, true);
-    lv_obj_invalidate(s_img);
     lvgl_port_unlock();
-    ESP_LOGI(TAG, "%s", s_c.caption);
+    ESP_LOGI(TAG, "%s%s", s_c.caption, recolour ? " (recoloured)" : "");
+}
+
+/* the rows painted since last time, redrawn: only those (a Hitomezashi row,
+   not the whole screen) */
+static void redraw(void) {
+    if (s_c.dirty_y1 < s_c.dirty_y0) return;
+    lv_area_t a = { 0, s_c.dirty_y0 < 0 ? 0 : s_c.dirty_y0, s_c.w - 1, s_c.dirty_y1 >= s_c.h ? s_c.h - 1 : s_c.dirty_y1 };
+    s_c.dirty_y0 = 1 << 30;
+    s_c.dirty_y1 = -1;
+    lvgl_port_lock(0);
+    lv_obj_invalidate_area(s_img, &a);
+    lvgl_port_unlock();
 }
 
 static void painter(void *arg) {
@@ -172,10 +230,17 @@ static void painter(void *arg) {
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             continue;
         }
-        if (s_algo < 0 || s_want_next || (done_at && esp_timer_get_time() / 1000 - done_at > HOLD_MS)) {
+        int64_t now = esp_timer_get_time() / 1000;
+        bool expired = done_at && !g_settings.gen_hold && now - done_at > HOLD_MS;
+        if (s_algo < 0 || s_want_next || expired) {
             s_want_next = false;
             done_at = 0;
-            start_next();
+            start_piece(false);
+        }
+        if (s_want_recolour) {
+            s_want_recolour = false;
+            done_at = 0;
+            start_piece(true);
         }
         if (s_want_save) {
             s_want_save = false;
@@ -185,11 +250,9 @@ static void painter(void *arg) {
             done_at = esp_timer_get_time() / 1000;
             ESP_LOGI(TAG, "%s: finished", s_c.name);
         }
-        int64_t now = esp_timer_get_time() / 1000;
-        if (now - last_draw > 250 || done_at == now) {   /* the screen: 4 times a second */
-            lvgl_port_lock(0);
-            lv_obj_invalidate(s_img);
-            lvgl_port_unlock();
+        now = esp_timer_get_time() / 1000;
+        if (now - last_draw > 250 || done_at) {   /* the screen: 4 times a second at most */
+            redraw();
             last_draw = now;
         }
         vTaskDelay(done_at ? pdMS_TO_TICKS(200) : 1);   /* the CPU back: the idle task, LVGL */
@@ -199,6 +262,25 @@ static void painter(void *arg) {
 /* ---- the page ---- */
 
 static void next_cb(lv_event_t *e) { s_want_next = true; }
+
+static void recolour_cb(lv_event_t *e) { s_want_recolour = true; }
+
+static void show_hold(void) { lv_label_set_text(s_hold_label, g_settings.gen_hold ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE); }
+
+/* hold: a finished piece stays till Next (the icon: what a tap does) */
+static void hold_cb(lv_event_t *e) {
+    g_settings.gen_hold = !g_settings.gen_hold;
+    settings_save();
+    show_hold();
+    lv_label_set_text(s_status, g_settings.gen_hold ? "Held: this piece stays till Next" : "Each piece now stays 90 s, then the next");
+    lv_obj_set_hidden(s_status, false);
+}
+
+static void mode_cb(lv_event_t *e) {
+    g_settings.gen_mode = (int32_t)lv_dropdown_get_selected(lv_event_get_current_target_obj(e)) - 1;   /* 0: all in turn */
+    settings_save();
+    s_want_next = true;
+}
 
 static void save_cb(lv_event_t *e) {
     lv_label_set_text(s_status, "Saving...");
@@ -258,6 +340,31 @@ lv_obj_t *generative_create(lv_obj_t *parent) {
     lv_obj_align(save, LV_ALIGN_TOP_RIGHT, -12, 12);
     lv_obj_t *next = button(page, LV_SYMBOL_NEXT, next_cb);
     lv_obj_align_to(next, save, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+    lv_obj_t *hold = button(page, LV_SYMBOL_PAUSE, hold_cb);
+    lv_obj_align_to(hold, next, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+    s_hold_label = lv_obj_get_child(hold, 0);
+    show_hold();
+    lv_obj_t *recolour = button(page, LV_SYMBOL_TINT, recolour_cb);
+    lv_obj_align_to(recolour, hold, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+
+    /* the piece's kind, right of the menu button */
+    static char opts[200] = "All in turn";
+    for (int k = 0; k < gen_nalgos; k++) snprintf(opts + strlen(opts), sizeof opts - strlen(opts), "\n%s", gen_algos[k].title);
+    lv_obj_t *dd = lv_dropdown_create(page);
+    lv_dropdown_set_options_static(dd, opts);
+    lv_dropdown_set_selected(dd, g_settings.gen_mode + 1 >= 0 && g_settings.gen_mode < gen_nalgos ? g_settings.gen_mode + 1 : 0);
+    lv_obj_set_width(dd, 210);
+    lv_obj_set_pos(dd, 92, 12);   /* clear of the menu button's touch area (to x 80) */
+    lv_obj_set_style_text_font(dd, &art_font_16, 0);
+    lv_obj_set_style_text_color(dd, lv_color_hex(0xE0F0FF), 0);
+    lv_obj_set_style_bg_color(dd, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(dd, LV_OPA_30, 0);
+    lv_obj_set_style_border_width(dd, 0, 0);
+    lv_obj_t *list = lv_dropdown_get_list(dd);
+    lv_obj_set_style_text_font(list, &art_font_20, 0);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x1B263B), 0);
+    lv_obj_set_style_text_color(list, lv_color_hex(0xE0F0FF), 0);
+    lv_obj_add_event_cb(dd, mode_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* the caption: bottom, between the corner buttons */
     s_caption = lv_label_create(page);

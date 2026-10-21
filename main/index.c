@@ -480,6 +480,22 @@ static void thumb_put_l(const char *path, int w, int h, const uint8_t *jpeg, siz
     sqlite3_finalize(st);
 }
 
+static bool random_thumb_l(char *path, size_t n, uint8_t **jpeg, size_t *len) {
+    *jpeg = NULL;
+    if (!s_db) return false;
+    sqlite3_stmt *st = prepare("SELECT path, jpeg FROM thumbs ORDER BY random() LIMIT 1");
+    if (st && sqlite3_step(st) == SQLITE_ROW) {
+        snprintf(path, n, "%s/%s", MOUNT, (const char *)sqlite3_column_text(st, 0));
+        int b = sqlite3_column_bytes(st, 1);
+        if (b > 0 && (*jpeg = heap_caps_malloc(b, MALLOC_CAP_SPIRAM))) {
+            memcpy(*jpeg, sqlite3_column_blob(st, 1), b);
+            *len = b;
+        }
+    }
+    sqlite3_finalize(st);
+    return *jpeg;
+}
+
 static int path_query(const char *sql, const char *path) {
     if (!s_db) return 0;
     sqlite3_stmt *st = prepare(sql);
@@ -610,6 +626,12 @@ void index_set_fav(const char *path, bool fav) {
 bool index_is_fav(const char *path) {
     LOCK();
     bool r = path_query("SELECT fav FROM pictures WHERE path = ?1", path);
+    UNLOCK();
+    return r;
+}
+bool index_random_thumb(char *path, size_t n, uint8_t **jpeg, size_t *len) {
+    LOCK();
+    bool r = random_thumb_l(path, n, jpeg, len);
     UNLOCK();
     return r;
 }

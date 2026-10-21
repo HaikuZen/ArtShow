@@ -60,5 +60,8 @@ bool index_is_fav(const char *path);
  * this index's or another database's (notes.c), holds this lock */
 void index_sqlite_lock(void);
 void index_sqlite_unlock(void);
+/* a random picture's thumbnail (its path; the JPEG malloc'd: free it); false:
+ * no thumbnails yet. The Generative page's colours */
+bool index_random_thumb(char *path, size_t n, uint8_t **jpeg, size_t *len);
 /* goes up each time a thumbnail is stored: the Gallery redraws */
 uint32_t index_thumbs_version(void);
