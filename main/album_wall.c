@@ -12,6 +12,7 @@
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -49,7 +50,18 @@ static lv_timer_t *s_tick;
 static QueueHandle_t s_q;
 static volatile bool s_sync_wanted = true;   /* the list (once a boot, at the first showing; Sync), then the covers */
 static bool s_list_due = true;               /* the list too, not only covers left from before */
+static bool s_retry_misses;                  /* ... and Wikipedia's misses forgotten (the Sync button) */
 static volatile bool s_downloading;          /* covers coming: no automatic Spotlight meanwhile */
+
+/* the Spotlight's tabs: the tracks (Deezer), what Wikipedia says (its intro,
+   personnel, reception). Their texts in PSRAM, written under the LVGL lock */
+enum { TAB_TRACKS, TAB_ABOUT, TAB_CREDITS, TAB_RECEPTION, TABS };
+static const size_t TAB_SIZE[TABS] = { 3000, 1600, 1600, 2600 };
+static char *s_text[TABS];
+static int s_tab;
+static int s_wiki_state;                     /* 0 being looked up, 1 there (or found nothing), 2 can't now */
+static int64_t s_hold_until;                 /* ms: a tab touched, the automatic Spotlight waits (reading) */
+#define HOLD_MS (3 * 60 * 1000)
 
 static void ask(req_kind_t kind, int k) {
     req_t r = { kind, k };
@@ -137,6 +149,23 @@ static void set_image(lv_obj_t *img, lv_image_dsc_t *d, uint16_t *px, int side) 
     lv_image_set_src(img, d);
 }
 
+/* the chosen tab's text into the scrolling label (in the LVGL lock) */
+static void show_tab(void) {
+    const char *t = s_text[s_tab] ? s_text[s_tab] : "";
+    if (s_tab == TAB_TRACKS) {
+        lv_label_set_text(s_tracks, t[0] ? t : "The tracks come from Deezer...");
+    } else if (t[0]) {
+        lv_label_set_text_fmt(s_tracks, "From Wikipedia:\n\n%s", t);
+    } else {
+        static const char *none[] = { "", "No article about this album on Wikipedia", "No personnel on Wikipedia's page",
+                                      "No reviews on Wikipedia's page" };
+        lv_label_set_text(s_tracks, s_wiki_state == 0 ? "Looking it up on Wikipedia..."
+                                    : s_wiki_state == 2 ? "Wikipedia can't be asked now: next time"
+                                    : !s_text[TAB_ABOUT][0] ? none[TAB_ABOUT] : none[s_tab]);
+    }
+    lv_obj_scroll_to_y(lv_obj_get_parent(s_tracks), 0, LV_ANIM_OFF);
+}
+
 /* ---- the worker ---- */
 
 static void spotlight(int k) {
@@ -157,8 +186,9 @@ static void spotlight(int k) {
     lv_label_set_text(s_title, a.title);
     lv_label_set_text(s_artist, a.artist);
     lv_label_set_text_fmt(s_meta, "%d   \xC2\xB7   %d tracks", a.year, a.tracks);
-    lv_label_set_text(s_tracks, "");
-    lv_obj_scroll_to_y(lv_obj_get_parent(s_tracks), 0, LV_ANIM_OFF);
+    for (int t = 0; t < TABS; t++) s_text[t][0] = 0;
+    s_wiki_state = 0;
+    show_tab();
     lvgl_port_unlock();
     /* label, genres and tracks: from Deezer, if it's there */
     static char *label, *genres, *tracks;   /* PSRAM: internal RAM is short */
@@ -173,10 +203,26 @@ static void spotlight(int k) {
         if (s_spot_k == k) {
             lv_label_set_text_fmt(s_meta, "%d   \xC2\xB7   %d tracks%s%s%s%s", a.year, a.tracks, label[0] ? "   \xC2\xB7   " : "", label,
                                   genres[0] ? "   \xC2\xB7   " : "", genres);
-            lv_label_set_text(s_tracks, tracks);
+            snprintf(s_text[TAB_TRACKS], TAB_SIZE[TAB_TRACKS], "%s", tracks);
+            show_tab();
         }
         lvgl_port_unlock();
     }
+    /* what Wikipedia says: cached once looked up */
+    static album_wiki_t *w;
+    if (!w && !(w = heap_caps_malloc(sizeof *w, MALLOC_CAP_SPIRAM))) return;
+    bool ok = albums_wiki(&a, w);   /* the cache first: no Wi-Fi needed then */
+    lvgl_port_lock(0);
+    if (s_spot_k == k) {
+        s_wiki_state = ok ? 1 : 2;
+        if (ok) {
+            snprintf(s_text[TAB_ABOUT], TAB_SIZE[TAB_ABOUT], "%s", w->about);
+            snprintf(s_text[TAB_CREDITS], TAB_SIZE[TAB_CREDITS], "%s", w->credits);
+            snprintf(s_text[TAB_RECEPTION], TAB_SIZE[TAB_RECEPTION], "%s", w->reception);
+        }
+        show_tab();
+    }
+    lvgl_port_unlock();
 }
 
 static void wall(int page) {
@@ -217,12 +263,12 @@ static void sync(void) {
         return;   /* asked again at the next showing */
     }
     if (s_list_due) {
-        if (albums_sync_list(progress, err, sizeof err) < 0) {
+        if (albums_sync_list(progress, s_retry_misses, err, sizeof err) < 0) {
             status(err);
             s_sync_wanted = false;   /* Sync, or the next boot, tries again */
             return;
         }
-        s_list_due = false;
+        s_list_due = s_retry_misses = false;
         s_count = albums_count();
     }
     /* the covers: breaks off for any request, goes on afterwards (not the list again) */
@@ -253,7 +299,7 @@ static void worker(void *arg) {
         else if (r.kind == REQ_WALL) wall(r.k);
         else if (r.kind == REQ_CLOSE) albums_close();
         else if (r.kind == REQ_WAKE) continue;
-        else s_sync_wanted = s_list_due = true;   /* Sync: the list again too */
+        else s_sync_wanted = s_list_due = s_retry_misses = true;   /* Sync: the list again, and Wikipedia's misses */
     }
 }
 
@@ -273,12 +319,19 @@ static void spot_next(void) {
 }
 
 static void tick_cb(lv_timer_t *t) {
+    if (esp_timer_get_time() / 1000 < s_hold_until) return;   /* someone's reading */
     if (!s_wall_mode && !s_downloading) spot_next();   /* a download gives way to any request: not to this one */
 }
 
 static void cover_cb(lv_event_t *e) {
     lv_timer_reset(s_tick);
     spot_next();
+}
+
+static void tab_cb(lv_event_t *e) {
+    s_tab = lv_buttonmatrix_get_selected_button(lv_event_get_current_target_obj(e));
+    s_hold_until = esp_timer_get_time() / 1000 + HOLD_MS;
+    show_tab();
 }
 
 static void cell_cb(lv_event_t *e) {   /* a cover on the Wall: into the Spotlight */
@@ -441,7 +494,21 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
         lv_obj_set_width(objs[k], LV_PCT(100));
         lv_label_set_long_mode(objs[k], LV_LABEL_LONG_MODE_WRAP);
     }
-    lv_obj_t *list = lv_obj_create(card);   /* the tracks: scroll when many */
+    lv_obj_t *tabs = lv_buttonmatrix_create(card);   /* what the text below is */
+    static const char *tab_map[] = { "Tracks", "About", "Credits", "Reception", "" };
+    lv_buttonmatrix_set_map(tabs, tab_map);
+    lv_buttonmatrix_set_button_ctrl_all(tabs, LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    lv_buttonmatrix_set_one_checked(tabs, true);
+    lv_buttonmatrix_set_button_ctrl(tabs, 0, LV_BUTTONMATRIX_CTRL_CHECKED);
+    lv_obj_set_size(tabs, LV_PCT(100), 38);
+    lv_obj_set_style_text_font(tabs, &art_font_16, 0);
+    lv_obj_set_style_bg_opa(tabs, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(tabs, 0, 0);
+    lv_obj_set_style_pad_all(tabs, 0, 0);
+    lv_obj_set_style_pad_column(tabs, 4, 0);
+    lv_obj_add_event_cb(tabs, tab_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    for (int t = 0; t < TABS; t++) s_text[t] = heap_caps_calloc(1, TAB_SIZE[t], MALLOC_CAP_SPIRAM);
+    lv_obj_t *list = lv_obj_create(card);   /* the tab's text: scrolls when long */
     lv_obj_remove_style_all(list);
     lv_obj_set_width(list, LV_PCT(100));
     lv_obj_set_flex_grow(list, 1);

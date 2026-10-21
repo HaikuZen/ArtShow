@@ -500,6 +500,20 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   it, never fetching the list again for that. The automatic Spotlight waits
   while covers download (it would break them off every 30 s). The cache is
   closed when the page is hidden.
+- The Spotlight's tabs: Tracks (Deezer), About, Credits, Reception: an
+  album's English Wikipedia article (then `CONFIG_ARTSHOW_WIKI_LANG`'s): its
+  intro, its Personnel/Credits section, its Reception/Critical reception
+  section (critics' quotes, ratings in words), the text from one
+  `prop=extracts&explaintext` call. Finding the page: Deezer's title without
+  "(OJC Remaster)" or " - Remastered", in Wikipedia's case ("Art Pepper Meets
+  the Rhythm Section": page names are case-sensitive past the first
+  letter), plain, then "(<artist> album)", "(album)" (it: "(album
+  <artist>)"), the summary's description must say album and the artist;
+  one search only as the last resort (the rate-limited call). Cached in
+  `albums.db`'s `wiki` table: a found page for good, "nothing" for 30 days
+  (the Sync button forgets them all); no answer (429, an error, no Wi-Fi:
+  anything but a 404) isn't cached. A tab touched holds the automatic
+  Spotlight 3 minutes (reading).
 - Internal RAM: each open file on the card holds a 4 KB cache in internal RAM
   (`CONFIG_FATFS_PER_FILE_CACHE`, aligned work buffers), and SQLite keeps a
   database and its journal open: so `max_files` is 9, the notes and album

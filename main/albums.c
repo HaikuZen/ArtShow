@@ -9,6 +9,8 @@
 #include "sqlite3.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include <ctype.h>
+#include <strings.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -63,7 +65,9 @@ static bool open_db(void) {
             sqlite3_exec(s_db, "PRAGMA journal_mode = TRUNCATE; PRAGMA synchronous = FULL;"
                                "CREATE TABLE IF NOT EXISTS albums(id INTEGER PRIMARY KEY, pos INTEGER, title TEXT,"
                                " artist TEXT, year INTEGER, tracks INTEGER, small TEXT, big TEXT, seen INTEGER);"
-                               "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value)",
+                               "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value);"
+                               "CREATE TABLE IF NOT EXISTS wiki(id INTEGER PRIMARY KEY, page TEXT, about TEXT, credits TEXT,"
+                               " reception TEXT, fetched INTEGER)",
                          NULL, NULL, NULL) == SQLITE_OK)
             return true;
         sqlite3_close(s_db);   /* a cache: a new one */
@@ -212,7 +216,7 @@ static int missing(long long *ids, char (*small)[160], char (*big)[160], int max
     return n;
 }
 
-int albums_sync_list(void (*progress)(const char *what), char *err, size_t n) {
+int albums_sync_list(void (*progress)(const char *what), bool retry_misses, char *err, size_t n) {
     if (!s_user[0]) {
         snprintf(err, n, "No Deezer user ID in config.json");
         return -1;
@@ -235,6 +239,8 @@ int albums_sync_list(void (*progress)(const char *what), char *err, size_t n) {
     } while (done < total);
     index_sqlite_lock();
     exec("DELETE FROM albums WHERE seen = 0");   /* no longer a favourite */
+    exec("DELETE FROM wiki WHERE id NOT IN (SELECT id FROM albums)");
+    if (retry_misses) exec("DELETE FROM wiki WHERE page = ''");   /* Sync: Wikipedia asked again about the misses */
     char sql[80];
     snprintf(sql, sizeof sql, "INSERT OR REPLACE INTO meta VALUES('synced', %lld)", (long long)time(NULL));
     exec(sql);
@@ -291,5 +297,190 @@ bool albums_details(long long id, char *label, size_t nl, char *genres, size_t n
         snprintf(tracks + l, nt - l, "%d.  %s   %d:%02d\n", ++k, json_str(g, "title") ?: "", d / 60, d % 60);
     }
     cJSON_Delete(j);
+    return true;
+}
+
+/* ---- Wikipedia: the album's article ---- */
+
+/* "Art Pepper Meets The Rhythm Section (OJC Remaster)" -> "Art Pepper Meets
+   the Rhythm Section": no edition in brackets or after " - ", and the small
+   words in lower case, as Wikipedia writes titles (its names are
+   case-sensitive past the first letter) */
+static void wiki_title(const char *title, char *out, size_t n, bool wiki_case) {
+    char t[160];
+    snprintf(t, sizeof t, "%s", title);
+    for (char *p; (p = strstr(t, " - "));) *p = 0;
+    size_t l = strlen(t);
+    while (l && (t[l - 1] == ')' || t[l - 1] == ']')) {   /* trailing "(...)" / "[...]" */
+        char *o = strrchr(t, t[l - 1] == ')' ? '(' : '[');
+        if (!o) break;
+        *o = 0;
+        l = strlen(t);
+        while (l && t[l - 1] == ' ') t[--l] = 0;
+    }
+    static const char *small[] = { "a", "an", "the", "and", "or", "but", "of", "in", "on", "at", "to", "for", "with", "by", "from", "as", "nor", NULL };
+    out[0] = 0;
+    int k = 0;
+    for (char *w = strtok(t, " "); w; w = strtok(NULL, " "), k++) {
+        char word[64];
+        snprintf(word, sizeof word, "%s", w);
+        if (wiki_case && k)
+            for (int i = 0; small[i]; i++)
+                if (!strcasecmp(word, small[i])) for (char *c = word; *c; c++) *c = tolower((unsigned char)*c);
+        snprintf(out + strlen(out), n - strlen(out), "%s%s", k ? " " : "", word);
+    }
+}
+
+static net_keep_t s_wiki_conn;
+
+/* a page's summary, if it's an album by this artist ("1957 studio album by
+   Art Pepper"); its title into page. busy: no real answer (429, a dropped
+   connection, a server error): only "no such page" (404) is one */
+static bool album_page(const char *lang, const char *cand, const char *artist, char *page, size_t n, bool *busy) {
+    char t[200], enc[400], url[480], err[160] = "";
+    snprintf(t, sizeof t, "%s", cand);
+    for (char *p = t; *p; p++) if (*p == ' ') *p = '_';
+    url_enc(enc, sizeof enc, t, NULL);
+    snprintf(url, sizeof url, "https://%s.wikipedia.org/api/rest_v1/page/summary/%s", lang, enc);
+    cJSON *j = net_keep_get_json(&s_wiki_conn, url, "Wikipedia", err, sizeof err);
+    if (err[0] && !strstr(err, "HTTP 404")) *busy = true;
+    const char *type = json_str(j, "type"), *desc = json_str(j, "description"), *text = json_str(j, "extract");
+    const char *surname = strrchr(artist, ' ');
+    surname = surname ? surname + 1 : artist;
+    bool ok = type && !strcmp(type, "standard") && desc && strcasestr(desc, "album") &&
+              (strcasestr(desc, surname) || (text && strcasestr(text, surname)));
+    if (ok) snprintf(page, n, "%s", json_str(j, "title") ?: cand);
+    cJSON_Delete(j);
+    return ok;
+}
+
+static bool find_page(const char *lang, const album_t *a, char *page, size_t n, bool *busy) {
+    char plain[160], wc[160], cand[3][220];
+    wiki_title(a->title, plain, sizeof plain, false);
+    wiki_title(a->title, wc, sizeof wc, true);
+    bool it = !strcmp(lang, "it");
+    snprintf(cand[0], sizeof cand[0], "%s", wc);   /* most albums: the plain title */
+    snprintf(cand[1], sizeof cand[1], it ? "%s (album %s)" : "%s (%s album)", wc, a->artist);
+    snprintf(cand[2], sizeof cand[2], "%s (album)", wc);
+    for (int k = 0; k < 3 && !*busy; k++)
+        if (album_page(lang, cand[k], a->artist, page, n, busy)) return true;
+    if (*busy) return false;
+    /* the last resort: one search ("title artist album") */
+    char q[300], enc[600], url[760], err[160] = "";
+    snprintf(q, sizeof q, "%s %s album", plain, a->artist);
+    url_enc(enc, sizeof enc, q, NULL);
+    snprintf(url, sizeof url, "https://%s.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch=%s", lang, enc);
+    cJSON *j = net_keep_get_json(&s_wiki_conn, url, "Wikipedia", err, sizeof err);
+    if (err[0]) *busy = true;   /* a search answers, empty or not: an error is no answer */
+    char hit[200] = "";
+    snprintf(hit, sizeof hit, "%s", json_str(j, "query.search.0.title") ?: "");
+    cJSON_Delete(j);
+    return hit[0] && album_page(lang, hit, a->artist, page, n, busy);
+}
+
+/* the level-2 section whose heading has one of the words (case aside), its
+   "=== sub ===" headings made "sub:" lines; at most n - 1 bytes, cut at a
+   line with "..." */
+static void section(const char *text, const char *const *words, char *out, size_t n) {
+    out[0] = 0;
+    for (const char *h = strstr(text, "\n== "); h; h = strstr(h + 1, "\n== ")) {
+        const char *e = strstr(h + 4, " ==\n");
+        if (!e) return;
+        bool match = false;
+        char head[80];
+        snprintf(head, sizeof head, "%.*s", (int)(e - h - 4) < 79 ? (int)(e - h - 4) : 79, h + 4);
+        for (int i = 0; words[i] && !match; i++) match = strcasestr(head, words[i]);
+        if (!match) continue;
+        const char *body = e + 4, *end = strstr(body, "\n== ");
+        while (*body == '\n' || *body == ' ') body++;   /* no blank lines in front */
+        size_t len = end ? (size_t)(end - body) : strlen(body), k = 0;
+        for (size_t i = 0; i < len && k + 4 < n; i++) {
+            if (body[i] == '=' ) continue;   /* "=== Ratings ===" -> " Ratings " */
+            out[k++] = body[i];
+        }
+        out[k] = 0;
+        if (len >= n - 4) snprintf(out + k, n - k, "...");
+        return;
+    }
+}
+
+/* the article as plain text (one call), cut into intro, credits, reception */
+static bool fetch_article(const char *lang, const char *page, album_wiki_t *w) {
+    char enc[400], url[560], err[160] = "";
+    url_enc(enc, sizeof enc, page, NULL);
+    snprintf(url, sizeof url,
+             "https://%s.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&exsectionformat=wiki&redirects=1&format=json&titles=%s",
+             lang, enc);
+    cJSON *j = net_keep_get_json(&s_wiki_conn, url, "Wikipedia", err, sizeof err);
+    const cJSON *pages = json_at(j, "query.pages"), *p = pages ? pages->child : NULL;
+    const char *text = json_str(p, "extract");
+    if (!text) {
+        cJSON_Delete(j);
+        return false;
+    }
+    const char *first = strstr(text, "\n== ");
+    size_t intro = first ? (size_t)(first - text) : strlen(text);
+    snprintf(w->about, sizeof w->about, "%.*s%s", (int)(intro < sizeof w->about - 4 ? intro : sizeof w->about - 4), text,
+             intro >= sizeof w->about - 4 ? "..." : "");
+    static const char *const personnel[] = { "personnel", "credits", "musicians", "formazione", "musicisti", NULL };
+    static const char *const reception[] = { "reception", "critic", "review", "accoglienza", "critica", NULL };
+    section(text, personnel, w->credits, sizeof w->credits);
+    section(text, reception, w->reception, sizeof w->reception);
+    cJSON_Delete(j);
+    return true;
+}
+
+static bool wiki_cached(long long id, album_wiki_t *w) {
+    bool found = false;
+    index_sqlite_lock();
+    sqlite3_stmt *st = NULL;
+    /* "nothing" counts for 30 days: an article may come, or a better match */
+    if (open_db() && sqlite3_prepare_v2(s_db, "SELECT page, about, credits, reception FROM wiki WHERE id = ?1"
+                                              " AND (page != '' OR fetched > ?2)", -1, &st, NULL) == SQLITE_OK) {
+        sqlite3_bind_int64(st, 1, id);
+        sqlite3_bind_int64(st, 2, (long long)time(NULL) - 30 * 86400);
+        if ((found = sqlite3_step(st) == SQLITE_ROW)) {
+            snprintf(w->page, sizeof w->page, "%s", (const char *)sqlite3_column_text(st, 0) ?: "");
+            snprintf(w->about, sizeof w->about, "%s", (const char *)sqlite3_column_text(st, 1) ?: "");
+            snprintf(w->credits, sizeof w->credits, "%s", (const char *)sqlite3_column_text(st, 2) ?: "");
+            snprintf(w->reception, sizeof w->reception, "%s", (const char *)sqlite3_column_text(st, 3) ?: "");
+        }
+    }
+    sqlite3_finalize(st);
+    index_sqlite_unlock();
+    return found;
+}
+
+static void wiki_store(long long id, const album_wiki_t *w) {
+    index_sqlite_lock();
+    sqlite3_stmt *st = NULL;
+    if (open_db() && sqlite3_prepare_v2(s_db, "INSERT OR REPLACE INTO wiki VALUES(?1, ?2, ?3, ?4, ?5, ?6)", -1, &st, NULL) == SQLITE_OK) {
+        sqlite3_bind_int64(st, 1, id);
+        sqlite3_bind_text(st, 2, w->page, -1, SQLITE_STATIC);
+        sqlite3_bind_text(st, 3, w->about, -1, SQLITE_STATIC);
+        sqlite3_bind_text(st, 4, w->credits, -1, SQLITE_STATIC);
+        sqlite3_bind_text(st, 5, w->reception, -1, SQLITE_STATIC);
+        sqlite3_bind_int64(st, 6, time(NULL));
+        sqlite3_step(st);
+    }
+    sqlite3_finalize(st);
+    index_sqlite_unlock();
+}
+
+bool albums_wiki(const album_t *a, album_wiki_t *w) {
+    memset(w, 0, sizeof *w);
+    if (wiki_cached(a->id, w)) return true;
+    const char *langs[] = { "en", CONFIG_ARTSHOW_WIKI_LANG };
+    bool busy = false, found = false;
+    for (int k = 0; k < 2 && !found && !busy; k++) {
+        if (k && !strcmp(langs[1], "en")) break;
+        if (find_page(langs[k], a, w->page, sizeof w->page, &busy) && !(found = fetch_article(langs[k], w->page, w)))
+            busy = true;   /* the page is there, its text didn't come: another time */
+    }
+    net_keep_close(&s_wiki_conn);
+    if (busy) return false;   /* asked again another time */
+    if (!found) memset(w, 0, sizeof *w);
+    wiki_store(a->id, w);   /* found or not: once */
+    ESP_LOGI(TAG, "%s: Wikipedia %s", a->title, found ? w->page : "has nothing");
     return true;
 }
