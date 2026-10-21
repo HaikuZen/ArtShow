@@ -129,7 +129,7 @@ bool slideshow_mount(void) {
     slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     const esp_vfs_fat_sdmmc_mount_config_t mc = {
         .format_if_mount_failed = false,         /* never wipe someone's pictures */
-        .max_files = 4,
+        .max_files = 9,                          /* SQLite keeps each database and its journal open: index, notes, albums (6), a picture, a download, a save; each costs a 4 KB cache in internal RAM */
         .allocation_unit_size = 16 * 1024,
     };
     esp_err_t err = esp_vfs_fat_sdmmc_mount(MOUNT, &host, &slot, &mc, &s_card);

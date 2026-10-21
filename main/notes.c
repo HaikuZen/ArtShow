@@ -44,6 +44,13 @@ static bool ready(void) {
     return open_db();
 }
 
+/* closed after each call: notes are seldom read or written, and an open
+   SQLite file and its journal hold a 4 KB cache each in internal RAM */
+static void done(void) {
+    sqlite3_close(s_db);
+    s_db = NULL;
+}
+
 static void key(char *buf, size_t n, int y, int m, int d) { snprintf(buf, n, "%04d-%02d-%02d", y, m, d); }
 
 bool notes_get(int year, int month, int day, char *buf, size_t n) {
@@ -57,6 +64,7 @@ bool notes_get(int year, int month, int day, char *buf, size_t n) {
         if (sqlite3_step(st) == SQLITE_ROW) snprintf(buf, n, "%s", (const char *)sqlite3_column_text(st, 0));
     }
     sqlite3_finalize(st);
+    done();
     index_sqlite_unlock();
     return buf[0];
 }
@@ -79,6 +87,7 @@ bool notes_set(int year, int month, int day, const char *text) {
         if (!ok) ESP_LOGW(TAG, "%s: %s", k, sqlite3_errmsg(s_db));
     }
     sqlite3_finalize(st);
+    done();
     index_sqlite_unlock();
     if (ok) ESP_LOGI(TAG, "%s: %s", k, *text ? "saved" : "deleted");
     return ok;
@@ -96,6 +105,7 @@ int notes_days(notes_date_t *out, int max) {
         }
     }
     sqlite3_finalize(st);
+    done();
     index_sqlite_unlock();
     return n;
 }

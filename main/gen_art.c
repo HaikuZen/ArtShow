@@ -78,10 +78,11 @@ static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
 /* sine and cosine from a table: 4096 steps a turn, interpolated */
 #define TAU 6.2831853f
-static float s_sin[4097];
+static float *s_sin;   /* 4097 entries, PSRAM: internal RAM is short */
 
 static void trig_init(void) {
-    if (s_sin[1024] > 0.5f) return;
+    if (s_sin) return;
+    if (!(s_sin = heap_caps_malloc(4097 * sizeof *s_sin, MALLOC_CAP_SPIRAM))) abort();   /* 16 KB: at boot it's there */
     for (int i = 0; i <= 4096; i++) s_sin[i] = sinf(i * TAU / 4096);
 }
 
@@ -418,42 +419,43 @@ static struct {
     uint16_t lead;
     int drawn;
     int64_t t0;
-} G;
+} *G;   /* PSRAM: 7 KB */
 
 static void glass_start(gen_canvas_t *c) {
+    if (!G && !(G = heap_caps_calloc(1, sizeof *G, MALLOC_CAP_SPIRAM))) return;
     s_rng = c->seed | 1;
     static const int cells[] = { 48, 64, 80, 100 };
-    G.cell = cells[rnd() % 4];
-    G.gx = (c->w + G.cell - 1) / G.cell;
-    G.gy = (c->h + G.cell - 1) / G.cell;
-    for (int j = 0; j < G.gy; j++)
-        for (int i = 0; i < G.gx; i++) {
-            int k = j * G.gx + i;
-            G.sx[k] = (i + frand(0.15f, 0.85f)) * G.cell;
-            G.sy[k] = (j + frand(0.15f, 0.85f)) * G.cell;
-            G.col[k] = shade(c->pal[1 + rnd() % (GEN_COLORS - 1)], frand(0.75f, 1.1f));
+    G->cell = cells[rnd() % 4];
+    G->gx = (c->w + G->cell - 1) / G->cell;
+    G->gy = (c->h + G->cell - 1) / G->cell;
+    for (int j = 0; j < G->gy; j++)
+        for (int i = 0; i < G->gx; i++) {
+            int k = j * G->gx + i;
+            G->sx[k] = (i + frand(0.15f, 0.85f)) * G->cell;
+            G->sy[k] = (j + frand(0.15f, 0.85f)) * G->cell;
+            G->col[k] = shade(c->pal[1 + rnd() % (GEN_COLORS - 1)], frand(0.75f, 1.1f));
         }
-    G.lead = rgb565(shade(c->pal[0], 0.6f));
-    G.drawn = 0;
-    G.t0 = now_ms();
+    G->lead = rgb565(shade(c->pal[0], 0.6f));
+    G->drawn = 0;
+    G->t0 = now_ms();
     fill(c, c->pal[0]);
     snprintf(c->name, sizeof c->name, "Stained glass %lu", (unsigned long)(c->seed % 10000));
     snprintf(c->caption, sizeof c->caption, "Stained glass No. %lu   \xC2\xB7   %d panes", (unsigned long)(c->seed % 10000),
-             G.gx * G.gy);
+             G->gx * G->gy);
 }
 
 /* a row: each pixel's nearest and second nearest seed (only the 3 x 3 grid
    cells around it can hold them); lead where the two are about as near */
 static void glass_row(gen_canvas_t *c, int y) {
-    int cy = y / G.cell;
+    int cy = y / G->cell;
     for (int x = 0; x < c->w; x++) {
-        int cx = x / G.cell, best = 0;
+        int cx = x / G->cell, best = 0;
         float d1 = 1e9f, d2 = 1e9f;
         for (int j = cy - 1; j <= cy + 1; j++)
             for (int i = cx - 1; i <= cx + 1; i++) {
-                if (i < 0 || j < 0 || i >= G.gx || j >= G.gy) continue;
-                int k = j * G.gx + i;
-                float dx = x - G.sx[k], dy = y - G.sy[k], d = dx * dx + dy * dy;
+                if (i < 0 || j < 0 || i >= G->gx || j >= G->gy) continue;
+                int k = j * G->gx + i;
+                float dx = x - G->sx[k], dy = y - G->sy[k], d = dx * dx + dy * dy;
                 if (d < d1) {
                     d2 = d1;
                     d1 = d;
@@ -464,20 +466,21 @@ static void glass_row(gen_canvas_t *c, int y) {
             }
         float a = sqrtf(d1), b = sqrtf(d2);
         if (b - a < 3.0f) {
-            c->px[y * c->w + x] = G.lead;
+            c->px[y * c->w + x] = G->lead;
         } else {   /* lighter at the pane's middle: light through glass */
-            float glow = 1.25f - 0.5f * a / G.cell;
-            c->px[y * c->w + x] = rgb565(shade(G.col[best], glow < 0.7f ? 0.7f : glow));
+            float glow = 1.25f - 0.5f * a / G->cell;
+            c->px[y * c->w + x] = rgb565(shade(G->col[best], glow < 0.7f ? 0.7f : glow));
         }
     }
 }
 
 static bool glass_step(gen_canvas_t *c, int budget_ms) {
-    int want = (int)((now_ms() - G.t0) * c->h / 15000);   /* ~15 s top to bottom */
-    int y0 = G.drawn;
-    while (G.drawn < c->h && G.drawn <= want) glass_row(c, G.drawn++);
-    if (G.drawn > y0) gen_dirty(c, y0, G.drawn - 1);
-    return G.drawn >= c->h;
+    if (!G) return true;
+    int want = (int)((now_ms() - G->t0) * c->h / 15000);   /* ~15 s top to bottom */
+    int y0 = G->drawn;
+    while (G->drawn < c->h && G->drawn <= want) glass_row(c, G->drawn++);
+    if (G->drawn > y0) gen_dirty(c, y0, G->drawn - 1);
+    return G->drawn >= c->h;
 }
 
 /* ---- Mondrian ---- */

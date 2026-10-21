@@ -55,8 +55,12 @@ static int dist2(uint32_t a, uint32_t b) {
 /* the most common colours (4 bits a channel), each unlike the ones before,
    darkest first; the darkest made darker still: the ground */
 static void palette_from(const uint16_t *src, int w, int h, int step, uint32_t *pal) {
-    static uint16_t hist[4096];
-    memset(hist, 0, sizeof hist);
+    static uint16_t *hist;   /* 8 KB, PSRAM */
+    if (!hist && !(hist = heap_caps_malloc(4096 * sizeof *hist, MALLOC_CAP_SPIRAM))) {
+        memcpy(pal, DEFAULT_PAL, sizeof DEFAULT_PAL);
+        return;
+    }
+    memset(hist, 0, 4096 * sizeof *hist);
     int n = 0;
     for (int y = step / 2; y < h; y += step)
         for (int x = step / 2; x < w; x += step) {

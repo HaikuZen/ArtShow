@@ -15,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,11 +54,11 @@ static struct {
     char path[256];
     bool fav, bad;
     lv_image_dsc_t dsc;
-} s_cell[PER_PAGE];
+} *s_cell;   /* PER_PAGE of them, PSRAM: 4 KB */
 static struct {
     lv_obj_t *btn, *label;
     char name[96];
-} s_art[ART_PAGE];
+} *s_art;   /* ART_PAGE of them, PSRAM: 2 KB */
 static gallery_mode_t s_mode;
 static bool s_picked;              /* MODE_ARTISTS: an artist picked (else their list) */
 static char s_artist[96];          /* ... that one ("" for the pictures with none) */
@@ -353,6 +354,9 @@ static void make_cell(int k) {
 }
 
 lv_obj_t *gallery_create(lv_obj_t *parent) {
+    s_cell = heap_caps_calloc(PER_PAGE, sizeof *s_cell, MALLOC_CAP_SPIRAM);
+    s_art = heap_caps_calloc(ART_PAGE, sizeof *s_art, MALLOC_CAP_SPIRAM);
+    assert(s_cell && s_art);   /* at boot, PSRAM has room */
     lv_obj_t *page = s_page = lv_obj_create(parent);
     lv_obj_set_size(page, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(page, lv_color_hex(BG), 0);

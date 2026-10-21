@@ -11,7 +11,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the gallery, the clock, weather, sun and moon, artwork, generative and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the gallery, the clock, weather, sun and moon, artwork, generative, album wall and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) with notes per day |
 | `main/notes.c/.h` | the calendar's notes, in their own SQLite database: see Clock below |
@@ -21,6 +21,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
 | `main/sun_moon.c/.h`, `main/astro.c/.h` | the Sun and Moon page, and the astronomy under it: see Sun and Moon below |
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
+| `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
 | `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page; its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
 | `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page, and night mode: see Settings below |
@@ -473,3 +474,36 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   colour), ~280 KB, into `/sdcard/Generated/`, and `slideshow_added`. While
   it's shown the slideshow's background thumbnails wait
   (`slideshow_background(false)`): the CPU and PSRAM are this page's.
+
+## Album Wall
+
+- `main/albums.c`: Deezer's public API, no key: `/user/<id>/albums` lists a
+  public profile's favourite albums (100 a page; 297 here: 3 calls, ~10 s);
+  `/album/<id>` gives the label, genres and tracks (the Spotlight's album,
+  fetched when shown). `/user/me` needs an OAuth token (a registered app):
+  not used. The ID: `config.json` > `"deezer": { "user_id": "..." }` (on the
+  card, not in the sources; digits only, it goes in a URL).
+- The cache: `/sdcard/.artshow/albums.db` (its own database, made anew if it
+  can't be read: nothing in it is the user's own) and the covers in
+  `/sdcard/.artshow/covers/`: `<id>.jpg` (1000 px, ~100 KB, baseline) and
+  `<id>_m.jpg` (250 px), downloaded once (~1.7 s an album). An album without
+  artwork: Deezer's cover address redirects to its blank one (MD5 of
+  nothing, d41d8...): a `<id>.none` marker, not asked again, and a plain
+  square with the title. (esp_http_client didn't follow that relative 302
+  on the board: not chased, the marker is the better answer anyway.)
+- `main/album_wall.c`: Spotlight (the cover 480 px, the page in its average
+  colour darkened, title, artist, year, tracks, label, genres, the track
+  list; another album every 30 s or on a tap) and Wall (6 x 3 covers a page,
+  a tap spotlights one); Sync top right. A worker task: requests (an album,
+  a page, a sync) first; a sync fetches the list once a boot (or on Sync),
+  then the covers missing, breaking off for any request and going on after
+  it, never fetching the list again for that. The automatic Spotlight waits
+  while covers download (it would break them off every 30 s). The cache is
+  closed when the page is hidden.
+- Internal RAM: each open file on the card holds a 4 KB cache in internal RAM
+  (`CONFIG_FATFS_PER_FILE_CACHE`, aligned work buffers), and SQLite keeps a
+  database and its journal open: so `max_files` is 9, the notes and album
+  databases are open only while used, and the big static buffers (generative
+  sine table and state, palette histogram, the Gallery's cells, the album
+  wall's text) are in PSRAM. Measured during a sync: ~108-120 KB free (the
+  firmware before the Album Wall: 91-119 KB).

@@ -367,6 +367,9 @@ static const char TEMPLATE[] =
     "      \"weatherbit\": \"\",\n"
     "      \"visualcrossing\": \"\"\n"
     "    }\n"
+    "  },\n"
+    "  \"deezer\": {\n"
+    "    \"user_id\": \"\"\n"
     "  }\n"
     "}\n";
 
