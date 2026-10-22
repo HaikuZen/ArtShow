@@ -638,3 +638,14 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   sine table and state, palette histogram, the Gallery's cells, the album
   wall's text) are in PSRAM. Measured during a sync: ~108-120 KB free (the
   firmware before the Album Wall: 91-119 KB).
+- The network tasks: the artwork, Now Showing, Album Wall and Gallery
+  workers have their stacks in PSRAM (`xTaskCreateWithCaps`,
+  `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY`; none writes flash: the
+  weather task writes NVS, so its stack stays internal). With them
+  internal (42 KB), the boot's overlapping TLS connections took free
+  internal RAM down to 4 KB: TLS failed (`-0x008D`, PSA's insufficient
+  memory) and an SD read couldn't get its DMA buffer. Now: ~96 KB free,
+  ~38-45 KB at the lowest. The artwork, Now Showing, Album Wall and
+  weather tasks run at idle priority: a handshake verifies in software
+  (rev v1.x) for seconds, and at priority 3 core 1's idle task starved
+  (task watchdog).

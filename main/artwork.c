@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -365,7 +366,10 @@ static void artwork_task(void *arg) {
 void artwork_start(artwork_cb_t cb) {
     s_cb = cb;
     for (int k = 0; k < 2; k++) s_px[k] = heap_caps_aligned_calloc(64, 1, STRIDE * ART_H, MALLOC_CAP_SPIRAM);
-    if (!s_px[0] || !s_px[1] || xTaskCreate(artwork_task, "artwork", 12 * 1024, NULL, 3, &s_task) != pdPASS) {
+    /* the stack in PSRAM (internal RAM ran out when the boot's TLS connections
+     * overlapped; no flash writes here), at idle priority: a handshake
+     * verifies in software for seconds, and at 3 core 1's idle task starved */
+    if (!s_px[0] || !s_px[1] || xTaskCreateWithCaps(artwork_task, "artwork", 12 * 1024, NULL, tskIDLE_PRIORITY, &s_task, MALLOC_CAP_SPIRAM) != pdPASS) {
         s_task = NULL;
         ESP_LOGE(TAG, "no memory for the artwork page");
         cb(NULL, "Out of memory");

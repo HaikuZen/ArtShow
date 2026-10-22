@@ -574,7 +574,8 @@ static void weather_task(void *arg) {
 
 void weather_start(weather_cb_t cb) {
     s_cb = cb;
-    if (xTaskCreate(weather_task, "weather", 12 * 1024, NULL, 3, &s_task) != pdPASS) {
+    /* idle priority, as the artwork task; the stack stays internal: it writes NVS */
+    if (xTaskCreate(weather_task, "weather", 12 * 1024, NULL, tskIDLE_PRIORITY, &s_task) != pdPASS) {
         s_task = NULL;
         ESP_LOGE(TAG, "no task");
     }

@@ -16,6 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -361,7 +362,8 @@ void now_showing_create(lv_obj_t *parent) {
 
     s_cache = heap_caps_calloc(CACHE, sizeof *s_cache, MALLOC_CAP_SPIRAM);
     s_q = xQueueCreate(1, PATH_LEN);
-    if (!s_cache || !s_q || xTaskCreate(lookup_task, "nowshow", 12 * 1024, NULL, 3, NULL) != pdPASS) {
+    /* stack in PSRAM, idle priority: as the artwork task */
+    if (!s_cache || !s_q || xTaskCreateWithCaps(lookup_task, "nowshow", 12 * 1024, NULL, tskIDLE_PRIORITY, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
         ESP_LOGE(TAG, "no memory for the lookups");
         if (s_q) vQueueDelete(s_q);
         s_q = NULL;

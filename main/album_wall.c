@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -679,7 +680,8 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
     s_tick = lv_timer_create(tick_cb, SPOT_MS, NULL);
     lv_timer_pause(s_tick);
     s_q = xQueueCreate(4, sizeof(req_t));
-    if (!s_q || !s_cover_px || xTaskCreate(worker, "albumwall", 10 * 1024, NULL, 3, NULL) != pdPASS)
+    /* stack in PSRAM, idle priority: as the artwork task */
+    if (!s_q || !s_cover_px || xTaskCreateWithCaps(worker, "albumwall", 10 * 1024, NULL, tskIDLE_PRIORITY, NULL, MALLOC_CAP_SPIRAM) != pdPASS)
         ESP_LOGE(TAG, "no memory for the album wall");
     lv_obj_set_hidden(page, true);
     return page;

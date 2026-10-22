@@ -15,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -547,7 +548,8 @@ lv_obj_t *gallery_create(lv_obj_t *parent) {
 
     s_items = heap_caps_calloc(PER_PAGE, sizeof *s_items, MALLOC_CAP_SPIRAM);
     s_q = xQueueCreate(1, sizeof(req_t));
-    if (!s_items || !s_q || xTaskCreate(worker, "gallery", 8 * 1024, NULL, 4, NULL) != pdPASS) {
+    /* stack in PSRAM: internal RAM is short (no flash writes here) */
+    if (!s_items || !s_q || xTaskCreateWithCaps(worker, "gallery", 8 * 1024, NULL, 4, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
         ESP_LOGE(TAG, "no memory for the gallery");
         s_q = NULL;
     }
