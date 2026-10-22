@@ -2,7 +2,10 @@
  * Spotlight album, a Wall page, a sync), the worker decodes covers from the
  * card (esp_new_jpeg, box-fitted) and fetches an album's details, then fills
  * the page under the LVGL lock. A sync (the list, then the covers missing)
- * gives way to any request between two covers and goes on afterwards. */
+ * gives way to any request between two covers and goes on afterwards.
+ * A record room: the Spotlight's sleeve with its record half out (drawn: a
+ * label in the cover's colour), the text in that colour as an accent; the
+ * Wall's covers standing on walnut shelves. */
 #include "album_wall.h"
 #include "albums.h"
 #include "wifi.h"
@@ -20,11 +23,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BG        0x0D1B2A
-#define RIM       0x415A77
-#define MINOR     0x778DA9
-#define TEXT      0xE0F0FF
-#define BIG       480          /* the Spotlight's cover */
+#define BG        0x1E1916     /* the room's wall */
+#define BUTTON    0x4A3A30
+#define MINOR     0xB3A595
+#define TEXT      0xF2E9DA
+#define BLANK     0x2E2620     /* a sleeve without a cover */
+#define WOOD      0x5A3B24
+#define WOOD_LIT  0x8A6040
+#define WOOD_DARK 0x2E1D12
+#define BIG       440          /* the Spotlight's cover */
+#define COVER_X   32
+#define COVER_Y   4            /* in the Spotlight (itself at y 76) */
+#define DISC_R    (BIG / 2 - 12)
+#define DISC_X    (COVER_X + BIG - 70)   /* the record's middle: half out of the sleeve */
+#define CARD_X    (DISC_X + DISC_R + 30)
 #define SMALL     150          /* the Wall's */
 #define COLS      6
 #define ROWS      3
@@ -40,7 +52,8 @@ typedef struct {
 } req_t;
 
 static lv_obj_t *s_page, *s_sub, *s_spot, *s_wall, *s_cover, *s_blank, *s_blank_title, *s_title, *s_artist, *s_meta, *s_tracks;
-static lv_obj_t *s_prev, *s_next, *s_pages, *s_cells[PER_PAGE];
+static lv_obj_t *s_prev, *s_next, *s_pages, *s_cells[PER_PAGE], *s_tabs;
+static lv_color_t s_avg;   /* the Spotlight's cover's average: the record's label, the accents */
 static lv_image_dsc_t s_cover_dsc, s_cell_dsc[PER_PAGE];
 static uint16_t *s_cover_px, *s_cell_px[PER_PAGE];
 static long long s_cell_id[PER_PAGE];
@@ -183,6 +196,11 @@ static void spotlight(int k) {
     /* the page in the cover's colour, dark enough for the text */
     uint32_t bg = ((avg >> 16 & 255) * 3 / 10) << 16 | ((avg >> 8 & 255) * 3 / 10) << 8 | ((avg & 255) * 3 / 10);
     lv_obj_set_style_bg_color(s_page, lv_color_hex(bg), 0);
+    s_avg = lv_color_hex(avg);
+    lv_color_t accent = lv_color_mix(s_avg, lv_color_hex(TEXT), 150);   /* light enough on the dark ground */
+    lv_obj_set_style_text_color(s_artist, accent, 0);
+    lv_obj_set_style_bg_color(s_tabs, accent, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_invalidate(s_spot);
     lv_label_set_text(s_title, a.title);
     lv_label_set_text(s_artist, a.artist);
     lv_label_set_text_fmt(s_meta, "%d   \xC2\xB7   %d tracks", a.year, a.tracks);
@@ -303,6 +321,90 @@ static void worker(void *arg) {
     }
 }
 
+/* ---- the record and the shelves: drawn ---- */
+
+static void disc_draw(lv_event_t *e) {
+    lv_obj_t *o = lv_event_get_current_target_obj(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_area_t a;
+    lv_obj_get_coords(o, &a);
+    int cx = a.x1 + DISC_X, cy = a.y1 + COVER_Y + BIG / 2;
+    lv_draw_rect_dsc_t r;
+    lv_draw_rect_dsc_init(&r);
+    r.radius = LV_RADIUS_CIRCLE;
+    r.bg_color = lv_color_hex(0x101010);
+    r.shadow_width = 18;
+    r.shadow_opa = LV_OPA_50;
+    r.shadow_color = lv_color_black();
+    lv_area_t d = { cx - DISC_R, cy - DISC_R, cx + DISC_R, cy + DISC_R };
+    lv_draw_rect(layer, &r, &d);
+    lv_draw_arc_dsc_t g;
+    lv_draw_arc_dsc_init(&g);
+    g.center.x = cx;
+    g.center.y = cy;
+    g.start_angle = 0;
+    g.end_angle = 360;
+    g.width = 1;
+    g.color = lv_color_hex(0x2C2C2C);
+    for (int rad = 78; rad < DISC_R - 4; rad += 7) {   /* the grooves; a wider gap between tracks */
+        g.radius = rad;
+        g.opa = rad % 5 ? LV_OPA_70 : LV_OPA_40;
+        lv_draw_arc(layer, &g);
+    }
+    g.radius = DISC_R - 4;   /* the sheen: two faint wedges, opposite */
+    g.width = DISC_R - 4 - 72;
+    g.color = lv_color_white();
+    g.opa = 14;
+    g.start_angle = 300;
+    g.end_angle = 335;
+    lv_draw_arc(layer, &g);
+    g.start_angle = 120;
+    g.end_angle = 155;
+    lv_draw_arc(layer, &g);
+    r.shadow_width = 0;   /* the label, its rim, the hole */
+    r.bg_color = lv_color_mix(s_avg, lv_color_black(), 200);
+    d = (lv_area_t){ cx - 66, cy - 66, cx + 66, cy + 66 };
+    lv_draw_rect(layer, &r, &d);
+    r.bg_color = s_avg;
+    d = (lv_area_t){ cx - 62, cy - 62, cx + 62, cy + 62 };
+    lv_draw_rect(layer, &r, &d);
+    r.bg_color = lv_color_mix(lv_color_hex(TEXT), s_avg, 90);
+    d = (lv_area_t){ cx - 40, cy - 1, cx + 40, cy };   /* a printed line, as labels have */
+    r.radius = 0;
+    lv_draw_rect(layer, &r, &d);
+    r.radius = LV_RADIUS_CIRCLE;
+    r.bg_color = lv_color_hex(0x080808);
+    d = (lv_area_t){ cx - 5, cy - 5, cx + 5, cy + 5 };
+    lv_draw_rect(layer, &r, &d);
+}
+
+/* a plank under each row of the Wall, wall to wall */
+static void shelves_draw(lv_event_t *e) {
+    if (!s_wall_mode) return;
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_area_t w;
+    lv_obj_get_coords(s_wall, &w);
+    lv_draw_rect_dsc_t r;
+    lv_draw_rect_dsc_init(&r);
+    for (int row = 0; row < ROWS; row++) {
+        int y = w.y1 + row * (SMALL + 12) + SMALL;
+        lv_area_t a = { 0, y + 4, 1023, y + 12 };   /* its shadow on the wall */
+        r.bg_color = lv_color_black();
+        r.bg_opa = LV_OPA_40;
+        lv_draw_rect(layer, &r, &a);
+        r.bg_opa = LV_OPA_COVER;
+        a = (lv_area_t){ 0, y, 1023, y + 7 };
+        r.bg_color = lv_color_hex(WOOD);
+        lv_draw_rect(layer, &r, &a);
+        a.y2 = a.y1;
+        r.bg_color = lv_color_hex(WOOD_LIT);
+        lv_draw_rect(layer, &r, &a);
+        a.y1 = a.y2 = y + 7;
+        r.bg_color = lv_color_hex(WOOD_DARK);
+        lv_draw_rect(layer, &r, &a);
+    }
+}
+
 /* ---- the page's events ---- */
 
 static void show_mode(void) {
@@ -312,6 +414,7 @@ static void show_mode(void) {
     lv_obj_set_hidden(s_next, !s_wall_mode);
     lv_obj_set_hidden(s_pages, !s_wall_mode);
     if (s_wall_mode) lv_obj_set_style_bg_color(s_page, lv_color_hex(BG), 0);
+    lv_obj_invalidate(s_page);   /* the shelves */
 }
 
 static void spot_next(void) {
@@ -399,7 +502,9 @@ static lv_obj_t *plain(lv_obj_t *parent) {
 
 static lv_obj_t *small_button(lv_obj_t *parent, const char *sym, lv_event_cb_t cb, int d) {
     lv_obj_t *b = lv_button_create(parent);
-    lv_obj_set_style_bg_color(b, lv_color_hex(RIM), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(BUTTON), 0);
+    lv_obj_set_style_text_color(b, lv_color_hex(TEXT), 0);
+    lv_obj_set_style_radius(b, 2, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
     lv_obj_set_size(b, 48, 40);
     lv_obj_set_ext_click_area(b, 8);
@@ -420,6 +525,8 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
     lv_obj_set_style_radius(page, 0, 0);
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_set_scrollable(page, false);
+    lv_obj_add_event_cb(page, shelves_draw, LV_EVENT_DRAW_MAIN, NULL);
+    s_avg = lv_color_hex(BLANK);
 
     lv_obj_t *head = label(page, &art_font_24, TEXT);   /* right of the menu button */
     lv_label_set_text(head, "Album Wall");
@@ -442,6 +549,12 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
     lv_obj_set_style_bg_opa(modes, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(modes, 0, 0);
     lv_obj_set_style_pad_all(modes, 0, 0);
+    lv_obj_set_style_bg_color(modes, lv_color_hex(BUTTON), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(modes, lv_color_hex(TEXT), LV_PART_ITEMS);
+    lv_obj_set_style_radius(modes, 2, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(modes, 0, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(modes, lv_color_hex(TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(modes, lv_color_hex(BG), LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_add_event_cb(modes, mode_cb, LV_EVENT_VALUE_CHANGED, NULL);
     s_prev = small_button(page, LV_SYMBOL_LEFT, page_cb, -1);
     lv_obj_set_pos(s_prev, 600, 4);
@@ -459,16 +572,22 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
     lv_obj_set_size(s_spot, LV_PCT(100), 600 - 76);
     lv_obj_set_pos(s_spot, 0, 76);
     lv_obj_set_clickable(s_spot, false);
-    s_cover = lv_image_create(s_spot);
-    lv_obj_set_pos(s_cover, 84, 0);
+    lv_obj_add_event_cb(s_spot, disc_draw, LV_EVENT_DRAW_MAIN, NULL);
+    s_cover = lv_image_create(s_spot);   /* the sleeve, over its record */
+    lv_obj_set_pos(s_cover, COVER_X, COVER_Y);
+    lv_obj_set_style_shadow_width(s_cover, 24, 0);
+    lv_obj_set_style_shadow_offset_x(s_cover, 6, 0);
+    lv_obj_set_style_shadow_offset_y(s_cover, 8, 0);
+    lv_obj_set_style_shadow_opa(s_cover, LV_OPA_60, 0);
+    lv_obj_set_style_shadow_color(s_cover, lv_color_black(), 0);
     lv_obj_set_clickable(s_cover, true);   /* a tap: another album */
     lv_obj_add_event_cb(s_cover, cover_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_set_hidden(s_cover, true);
     s_blank = lv_obj_create(s_spot);   /* for an album without a cover */
     lv_obj_remove_style_all(s_blank);
     lv_obj_set_size(s_blank, BIG, BIG);
-    lv_obj_set_pos(s_blank, 84, 0);
-    lv_obj_set_style_bg_color(s_blank, lv_color_hex(0x1B263B), 0);
+    lv_obj_set_pos(s_blank, COVER_X, COVER_Y);
+    lv_obj_set_style_bg_color(s_blank, lv_color_hex(BLANK), 0);
     lv_obj_set_style_bg_opa(s_blank, LV_OPA_COVER, 0);
     lv_obj_set_flex_flow(s_blank, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_blank, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -482,8 +601,8 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
     lv_obj_set_style_text_align(s_blank_title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_hidden(s_blank, true);
     lv_obj_t *card = plain(s_spot);
-    lv_obj_set_pos(card, 84 + BIG + 28, 0);
-    lv_obj_set_size(card, 1024 - (84 + BIG + 28) - 24, 460);
+    lv_obj_set_pos(card, CARD_X, COVER_Y);
+    lv_obj_set_size(card, 1024 - CARD_X - 20, 456);   /* above the Wi-Fi button */
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(card, 8, 0);
     s_title = label(card, &art_font_32, TEXT);
@@ -494,7 +613,12 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
         lv_obj_set_width(objs[k], LV_PCT(100));
         lv_label_set_long_mode(objs[k], LV_LABEL_LONG_MODE_WRAP);
     }
-    lv_obj_t *tabs = lv_buttonmatrix_create(card);   /* what the text below is */
+    lv_obj_t *rule = plain(card);   /* under the title */
+    lv_obj_set_size(rule, 64, 4);
+    lv_obj_set_style_bg_color(rule, lv_color_hex(TEXT), 0);
+    lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
+    lv_obj_move_to_index(rule, 1);
+    lv_obj_t *tabs = s_tabs = lv_buttonmatrix_create(card);   /* what the text below is */
     static const char *tab_map[] = { "Tracks", "About", "Credits", "Reception", "" };
     lv_buttonmatrix_set_map(tabs, tab_map);
     lv_buttonmatrix_set_button_ctrl_all(tabs, LV_BUTTONMATRIX_CTRL_CHECKABLE);
@@ -506,6 +630,15 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
     lv_obj_set_style_border_width(tabs, 0, 0);
     lv_obj_set_style_pad_all(tabs, 0, 0);
     lv_obj_set_style_pad_column(tabs, 4, 0);
+    lv_obj_set_style_bg_opa(tabs, LV_OPA_TRANSP, LV_PART_ITEMS);   /* flat; the chosen one a block of the accent */
+    lv_obj_set_style_bg_opa(tabs, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(tabs, lv_color_hex(TEXT), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(tabs, lv_color_hex(0x141010), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(tabs, lv_color_hex(MINOR), LV_PART_ITEMS);
+    lv_obj_set_style_border_width(tabs, 1, LV_PART_ITEMS);
+    lv_obj_set_style_border_side(tabs, LV_BORDER_SIDE_BOTTOM, LV_PART_ITEMS);
+    lv_obj_set_style_radius(tabs, 0, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(tabs, 0, LV_PART_ITEMS);
     lv_obj_add_event_cb(tabs, tab_cb, LV_EVENT_VALUE_CHANGED, NULL);
     for (int t = 0; t < TABS; t++) s_text[t] = heap_caps_calloc(1, TAB_SIZE[t], MALLOC_CAP_SPIRAM);
     lv_obj_t *list = lv_obj_create(card);   /* the tab's text: scrolls when long */
@@ -524,13 +657,18 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
     lv_obj_set_pos(s_wall, 40, 70);
     lv_obj_set_size(s_wall, COLS * SMALL + (COLS - 1) * 12, ROWS * SMALL + (ROWS - 1) * 12);
     lv_obj_set_flex_flow(s_wall, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_overflow_visible(s_wall, true);   /* the covers' shadows */
     lv_obj_set_style_pad_column(s_wall, 12, 0);
     lv_obj_set_style_pad_row(s_wall, 12, 0);
     for (int k = 0; k < PER_PAGE; k++) {
         s_cells[k] = lv_image_create(s_wall);
         lv_obj_set_size(s_cells[k], SMALL, SMALL);
-        lv_obj_set_style_bg_color(s_cells[k], lv_color_hex(0x1B263B), 0);
+        lv_obj_set_style_bg_color(s_cells[k], lv_color_hex(BLANK), 0);
         lv_obj_set_style_bg_opa(s_cells[k], LV_OPA_COVER, 0);
+        lv_obj_set_style_shadow_width(s_cells[k], 10, 0);   /* leaning on the wall */
+        lv_obj_set_style_shadow_offset_x(s_cells[k], 4, 0);
+        lv_obj_set_style_shadow_opa(s_cells[k], LV_OPA_50, 0);
+        lv_obj_set_style_shadow_color(s_cells[k], lv_color_black(), 0);
         lv_obj_set_clickable(s_cells[k], true);
         lv_obj_add_event_cb(s_cells[k], cell_cb, LV_EVENT_CLICKED, (void *)(intptr_t)k);
         s_cell_px[k] = heap_caps_aligned_calloc(64, SMALL * SMALL, sizeof(uint16_t), MALLOC_CAP_SPIRAM);

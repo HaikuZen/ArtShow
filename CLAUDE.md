@@ -606,10 +606,12 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   nothing, d41d8...): a `<id>.none` marker, not asked again, and a plain
   square with the title. (esp_http_client didn't follow that relative 302
   on the board: not chased, the marker is the better answer anyway.)
-- `main/album_wall.c`: Spotlight (the cover 480 px, the page in its average
-  colour darkened, title, artist, year, tracks, label, genres, the track
-  list; another album every 30 s or on a tap) and Wall (6 x 3 covers a page,
-  a tap spotlights one); Sync top right. A worker task: requests (an album,
+- `main/album_wall.c`: a record room. Spotlight (the cover 440 px, a sleeve
+  with its record half out behind it, drawn: grooves, a sheen, a label in
+  the cover's average colour, which also tints the artist and the chosen
+  tab; the page in that colour darkened, title, artist, year, tracks, label, genres, the track
+  list; another album every 30 s or on a tap) and Wall (6 x 3 covers a page
+  standing on walnut shelves drawn wall to wall, a tap spotlights one); Sync top right. A worker task: requests (an album,
   a page, a sync) first; a sync fetches the list once a boot (or on Sync),
   then the covers missing, breaking off for any request and going on after
   it, never fetching the list again for that. The automatic Spotlight waits
