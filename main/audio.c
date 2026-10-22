@@ -8,11 +8,12 @@
 #include "freertos/task.h"
 #include <math.h>
 
-#define RATE 16000
+#define RATE AUDIO_RATE
 static i2s_chan_handle_t s_tx;
 
 void audio_init(void) {
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+    cc.auto_clear_after_cb = true;   /* nothing to send: zeros, not the last buffer again (a buzz) */
     ESP_ERROR_CHECK(i2s_new_channel(&cc, &s_tx, NULL));
     i2s_std_config_t sc = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(RATE),
@@ -40,4 +41,18 @@ void audio_beep(int hz, int ms) {
     }
     vTaskDelay(pdMS_TO_TICKS(30));                 /* let the DMA drain before the amps go off */
     gpio_set_level(PIN_AMP_SD, 1);                 /* amps off */
+}
+
+void audio_stream(bool on) { gpio_set_level(PIN_AMP_SD, on ? 0 : 1); }   /* active low */
+
+void audio_write(const int16_t *mono, int n) {
+    static int16_t buf[2 * 256];
+    while (n > 0) {
+        int k = n < 256 ? n : 256;
+        for (int i = 0; i < k; i++) buf[2 * i] = buf[2 * i + 1] = mono[i];
+        size_t w;
+        i2s_channel_write(s_tx, buf, k * 4, &w, portMAX_DELAY);
+        mono += k;
+        n -= k;
+    }
 }

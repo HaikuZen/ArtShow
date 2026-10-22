@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "index.h"
 #include "thumb.h"
+#include "music.h"
 #include "board_pins.h"
 #include "fonts/art_fonts.h"
 #include "esp_jpeg_enc.h"
@@ -37,7 +38,7 @@ static lv_image_dsc_t s_dsc;
 static gen_canvas_t s_c;
 static TaskHandle_t s_task;
 static volatile bool s_shown, s_want_next, s_want_save, s_want_recolour;
-static lv_obj_t *s_hold_label;
+static lv_obj_t *s_hold_label, *s_music_label;
 static int s_algo = -1;
 
 /* ---- the palette: from the slideshow's picture ---- */
@@ -207,9 +208,11 @@ static void start_piece(bool recolour) {
     s_c.dirty_y0 = 1 << 30;
     s_c.dirty_y1 = -1;
     gen_algos[s_algo].start(&s_c);
+    char tune[64];   /* its music: the same kind, seed and colours */
+    music_piece(s_c.seed, s_algo, s_c.pal, tune, sizeof tune);
     lvgl_port_lock(0);
-    if (who[0]) lv_label_set_text_fmt(s_caption, "%s   \xC2\xB7   colours from %s", s_c.caption, who);
-    else lv_label_set_text(s_caption, s_c.caption);
+    if (who[0]) lv_label_set_text_fmt(s_caption, "%s   \xC2\xB7   colours from %s   \xC2\xB7   music: %s", s_c.caption, who, tune);
+    else lv_label_set_text_fmt(s_caption, "%s   \xC2\xB7   music: %s", s_c.caption, tune);
     lv_obj_set_hidden(s_status, true);
     lvgl_port_unlock();
     ESP_LOGI(TAG, "%s%s", s_c.caption, recolour ? " (recoloured)" : "");
@@ -269,6 +272,15 @@ static void next_cb(lv_event_t *e) { s_want_next = true; }
 
 static void recolour_cb(lv_event_t *e) { s_want_recolour = true; }
 
+static void show_music(void) { lv_label_set_text(s_music_label, g_settings.gen_music ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE); }
+
+static void music_cb(lv_event_t *e) {
+    g_settings.gen_music = !g_settings.gen_music;
+    settings_save();
+    show_music();
+    music_play(g_settings.gen_music && s_shown);
+}
+
 static void show_hold(void) { lv_label_set_text(s_hold_label, g_settings.gen_hold ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE); }
 
 /* hold: a finished piece stays till Next (the icon: what a tap does) */
@@ -294,6 +306,7 @@ static void save_cb(lv_event_t *e) {
 
 void generative_shown(bool shown) {
     s_shown = shown;
+    music_play(shown && g_settings.gen_music);
     slideshow_background(!shown);   /* the slideshow's thumbnails wait: the CPU and PSRAM are this page's */
     if (shown && s_task) xTaskNotifyGive(s_task);
 }
@@ -350,6 +363,11 @@ lv_obj_t *generative_create(lv_obj_t *parent) {
     show_hold();
     lv_obj_t *recolour = button(page, LV_SYMBOL_TINT, recolour_cb);
     lv_obj_align_to(recolour, hold, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+    lv_obj_t *music = button(page, LV_SYMBOL_VOLUME_MAX, music_cb);
+    lv_obj_align_to(music, recolour, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+    s_music_label = lv_obj_get_child(music, 0);
+    show_music();
+    music_init();
 
     /* the piece's kind, right of the menu button */
     static char opts[200] = "All in turn";

@@ -22,6 +22,7 @@ typedef struct {
     int32_t backlight_hz;   /* the backlight's PWM: some drivers flicker when dim at one, not another */
     int32_t gen_mode;       /* the Generative page: one piece (gen_algos' index), or -1: all in turn */
     bool gen_hold;          /* ... a finished piece stays till Next */
+    bool gen_music;         /* ... its music on the speaker */
 } settings_t;
 
 extern settings_t g_settings;

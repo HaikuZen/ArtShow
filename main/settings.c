@@ -39,6 +39,7 @@ settings_t g_settings = {
     .night_level = 0,
     .backlight_hz = 30000,   /* board.c's at boot */
     .gen_mode = -1,
+    .gen_music = true,
 };
 
 typedef struct {

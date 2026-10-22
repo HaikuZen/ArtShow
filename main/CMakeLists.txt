@@ -3,7 +3,7 @@ idf_component_register(SRCS "slideshow.c" "main.c" "board.c" "wifi.c" "wifi_ui.c
                             "net.c" "artwork.c" "artwork_page.c" "now_showing.c" "astro.c" "sun_moon.c"
                             "settings.c" "settings_page.c" "night.c" "index.c"
                             "thumb.c" "gallery.c" "notes.c"
-                            "gen_art.c" "generative.c" "albums.c" "album_wall.c"
+                            "gen_art.c" "generative.c" "albums.c" "album_wall.c" "music.c" "music_synth.c"
                             "fonts/art_font_16.c" "fonts/art_font_20.c" "fonts/art_font_24.c" "fonts/art_font_32.c"
                        INCLUDE_DIRS "."
                        REQUIRES esp_lcd esp_driver_i2c esp_driver_ledc esp_driver_gpio esp_hw_support esp_wifi esp_netif esp_event nvs_flash esp_driver_i2s

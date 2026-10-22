@@ -21,6 +21,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
 | `main/sun_moon.c/.h`, `main/astro.c/.h` | the Sun and Moon page, and the astronomy under it: see Sun and Moon below |
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
+| `main/music.c/.h`, `main/music_synth.c/.h` | the Generative page's music: see Generative below |
 | `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
 | `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page; its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
@@ -474,6 +475,20 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   colour), ~280 KB, into `/sdcard/Generated/`, and `slideshow_added`. While
   it's shown the slideshow's background thumbnails wait
   (`slideshow_background(false)`): the CPU and PSRAM are this page's.
+- Music (`main/music_synth.c`, plain C: it renders WAVs on a computer too):
+  each piece has its own, from the same kind, seed and colours. The kind
+  sets the scale, tempo and sound (flow field: lydian, soft FM; attractor:
+  aeolian bells; Hitomezashi: hirajoshi plucks; stained glass: dorian
+  chords; Mondrian: brisk pentatonic, walking bass; Truchet: a looping
+  riff), the middle colour's hue the key, the seed the tune. 2-operator FM
+  voices (10), a pad on the bar's chord, a feedback echo, a low-pass, a soft
+  clip. `main/music.c`: a task on core 0 (the painter is on core 1) renders
+  16 ms at a time into the I2S DMA, which paces it: ~1.3 ms of CPU each.
+  `audio.c`'s channel auto-clears (silence between writes, not a buzz).
+  The speaker button (top right, `g_settings.gen_music`, on by default)
+  mutes it; it plays only while the page is shown, fades over 0.3 s, then
+  the amps go off. Night mode's dark (dimmed or off) silences it
+  (`music_quiet`).
 
 ## Album Wall
 
