@@ -17,9 +17,9 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/notes.c/.h` | the calendar's notes, in their own SQLite database: see Clock below |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
 | `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
-| `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
+| `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page (the place's sky painted with the weather in it); its icons, drawn with LVGL shapes |
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
-| `main/sun_moon.c/.h`, `main/sky_paint.c/.h`, `main/astro.c/.h` | the Sun and Moon page, its painted sky, and the astronomy under it: see Sun and Moon below |
+| `main/sun_moon.c/.h`, `main/sky_paint.c/.h`, `main/sky_view.c/.h`, `main/astro.c/.h` | the Sun and Moon page, the painted sky (shared with the Weather page), and the astronomy under it: see Sun and Moon below |
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
 | `main/music.c/.h`, `main/music_synth.c/.h` | the Generative page's music: see Generative below |
 | `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
@@ -270,7 +270,22 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 - `main/weather_icon.c`: the icons are drawn in the draw event on a 100x100 grid
   (circles, rounded bars, lines), so they scale to any size and look the same
   for every provider. The moon's bite takes the color of the first opaque
-  background above it.
+  background above it (so the cards and the hours' band are opaque). Two
+  sets of inks: bright (the hours' dark band) and a print's
+  (`weather_icon_print`: vermilion sun, ochre moon, indigo clouds and rain;
+  the paper cards).
+- `main/weather_page.c`: a woodblock print, like the Sun and Moon page:
+  the place's sky (`sky_view`, the same hills) with the weather now in it
+  (`weather_sky`: the kind to cover, rain, snow, fog, storm; sky_paint.c
+  greys the sky, thickens and darkens the clouds, draws rain as fine
+  slanting lines, snow on the peaks, mist over the hills, a bolt).
+  Painted when shown, each minute while shown, and when a forecast comes.
+  On it: a paper cartouche top left (place, temperature, sky, details,
+  "Updated"), the hours (WeatherAPI) and the days as paper cards with a
+  seal-red rule: the hours' a row to swipe, the days' (116 x 204: their
+  ~170 px of text and icon) between the bottom corner buttons. Free plans count calls: each boot fetches,
+  and a day of test reboots used up Weatherbit's 50 (HTTP 429 till the
+  next day).
 
 ## Artwork
 
@@ -388,10 +403,15 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   of hills (summed sines from the place; one pass a column: the frontmost
   ridge's colour from a table, a ridge's edge blended over the hill
   behind). ~5 ms on the computer, ~0.4 s on the board.
-- `main/sun_moon.c`: the picture full screen (an lv_image, 64-byte
-  aligned), painted in place by a task on core 1 at priority 1 each
-  minute (in the LVGL task it froze the screen ~1 s a minute; a minute's
-  change is a few pixels, so a half-painted one never shows). On it: the
+- `main/sky_view.c`: the canvas (1024x600, PSRAM, 64-byte aligned) and
+  the painter task, shared by the Sun and Moon and Weather pages (one is
+  shown at a time): a page makes its own image of the canvas and asks for
+  a paint (the latest wish wins). The painter is on core 1 at idle
+  priority: a picture doesn't yield (0.4 s, up to 4 s beside the artwork's
+  decoder), and at priority 1 core 1's idle task starved (task watchdog).
+  It paints in place: a minute's change is a few pixels, so a half-painted
+  one never shows; switching pages shows the other's for ~1 s.
+- `main/sun_moon.c`: the picture full screen, painted each minute. On it: the
   times of sunrise, noon (and its height) and sunset in small dark tabs
   on the horizon where they happen, a cartouche top right (the title,
   the place, the date; a seal-red border), and a caption on the near
@@ -399,9 +419,9 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   hours, the next solstice or equinox; a small moon (painted, up or not)
   with its phase, rise and set, the next full moon, the next new moon.
   Each caption label has a fixed one-line height: LVGL's DOTS mode only
-  shortens a label of a fixed height, else it wraps over the line below. The day's numbers when shown
-  on a new day (or a new place): ~0.5 s in the LVGL task (doubles in
-  software: the P4's FPU is single precision).
+  shortens a label of a fixed height, else it wraps over the line below.
+  The day's numbers when shown on a new day (or a new place): ~0.5 s in
+  the LVGL task (doubles in software: the P4's FPU is single precision).
 
 ## Settings
 

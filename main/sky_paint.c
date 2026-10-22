@@ -14,7 +14,12 @@
  *    night, sky by day
  *  - the hills: three ridges of summed sines (their phases from the place),
  *    each a flat colour between the horizon's and the ink's, lighter at its
- *    top (the printers' bokashi) */
+ *    top (the printers' bokashi)
+ *  - the weather: cover greys the sky and brings more, thicker, darker
+ *    clouds, and hides the sun and the moon; rain is fine diagonal lines
+ *    over everything (dark on a light sky, light on a dark one); snow is
+ *    flakes and white crests; fog fades the hills (the far ones most) and
+ *    lays mist over them; a storm adds a bolt */
 #include "sky_paint.h"
 #include <math.h>
 #include <string.h>
@@ -160,9 +165,32 @@ static void grained(rgb_t c, float amount, uint16_t out[16]) {
     }
 }
 
+static rgb_t grey(rgb_t c, float k) {
+    float l = (c.r * 77 + c.g * 150 + c.b * 29) / 256 * k;
+    return (rgb_t){ l, l, l * 1.04f };
+}
+
+static float luma(rgb_t c) { return (c.r * 77 + c.g * 150 + c.b * 29) / 256; }
+
+/* a line w pixels wide, alpha a, from (x1, y1) to (x2, y2) */
+static void stroke(uint16_t *px, int w, int h, float x1, float y1, float x2, float y2, rgb_t c, float a) {
+    int n = (int)fmaxf(fabsf(x2 - x1), fabsf(y2 - y1)) + 1;
+    for (int i = 0; i <= n; i++) {
+        int x = (int)(x1 + (x2 - x1) * i / n), y = (int)(y1 + (y2 - y1) * i / n);
+        if (x >= 0 && x < w && y >= 0 && y < h) blend(&px[y * w + x], c, a);
+    }
+}
+
 void sky_paint(const sky_t *s, uint16_t *px, int w, int h) {
     rgb_t top, mid, hor, ink;
     palette(s->sun_alt, &top, &mid, &hor, &ink);
+    if (s->cover > 0) {   /* overcast: greyer and a little darker */
+        float k = s->cover * (s->storm ? 0.95f : 0.85f), d = s->storm ? 0.6f : 0.85f;
+        top = mix(top, grey(top, d), k);
+        mid = mix(mid, grey(mid, d), k);
+        hor = mix(hor, grey(hor, d), k);
+    }
+    rgb_t fogc = mix(hor, hex(0xE8E8E4), s->sun_alt > 0 ? 0.5f : 0.15f);
     const int hz = sky_horizon(h);
     if (!s_grain[0] && !s_grain[1])
         for (int i = 0; i < 64 * 64; i++) s_grain[i] = hash(i * 2654435761u + 7) & 15;
@@ -178,7 +206,7 @@ void sky_paint(const sky_t *s, uint16_t *px, int w, int h) {
     }
 
     /* stars, fading in as the sun goes down */
-    float stars = clampf((-s->sun_alt - 6) / 8, 0, 1);
+    float stars = clampf((-s->sun_alt - 6) / 8, 0, 1) * clampf(1 - s->cover * 1.3f, 0, 1);
     if (stars > 0)
         for (int k = 0; k < 320; k++) {
             uint32_t r = hash(k * 7919 + 17);
@@ -190,13 +218,20 @@ void sky_paint(const sky_t *s, uint16_t *px, int w, int h) {
         }
 
     /* clouds: long thin streaks, other ones each day, lit from below near sunrise and sunset */
-    for (int k = 0; k < 6; k++) {
+    int nclouds = 6 + (int)(s->cover * 14);
+    for (int k = 0; k < nclouds; k++) {
         uint32_t r = hash(s->day * 131 + k * 7 + 3);
-        float cx = (float)(r % w), cy = 60 + (float)((r >> 10) % (hz - 160)), len = 140 + (float)((r >> 20) % 260);
-        float th = 5 + (float)((r >> 4) % 9);
+        float cx = (float)(r % w), cy = 40 + (float)((r >> 10) % (hz - 120)), len = 140 + (float)((r >> 20) % 260);
+        float th = (5 + (float)((r >> 4) % 9)) * (1 + s->cover * 1.6f);
         rgb_t body = mix(mid, hex(0xFFFFFF), s->sun_alt > 10 ? 0.55f : 0.2f), under = mix(hor, hex(0xFFE0C0), 0.3f);
-        float warm = clampf(1 - fabsf(s->sun_alt - 2) / 12, 0, 1);   /* sunrise and sunset light them from below */
-        float a0 = s->sun_alt < -10 ? 0.25f : 0.6f;
+        if (s->cover > 0.5f) {   /* rain clouds: dark undersides */
+            float heavy = (s->cover - 0.5f) * 2;   /* 0 at half cover .. 1 overcast */
+            rgb_t dark = mix(grey(mid, s->storm ? 0.45f : 0.7f), ink, 0.2f);
+            body = mix(body, grey(body, 0.95f - 0.3f * heavy - 0.25f * s->rain), s->cover);
+            under = mix(under, dark, heavy);
+        }
+        float warm = clampf(1 - fabsf(s->sun_alt - 2) / 12, 0, 1) * (1 - s->cover);   /* sunrise and sunset light them from below */
+        float a0 = (s->sun_alt < -10 ? 0.25f : 0.6f) * (1 + s->cover * 0.5f);
         for (int y = (int)(cy - th); y <= (int)(cy + th); y++) {
             if (y < 0 || y >= hz) continue;
             float v = (y - cy) / th;   /* -1 top .. 1 underside */
@@ -218,29 +253,44 @@ void sky_paint(const sky_t *s, uint16_t *px, int w, int h) {
         disc(px, w, h, x, y, 1.6f, hex(0xFFF4D8), 0.45f);
     }
 
-    /* the moon, if it's up */
-    if (s->moon_alt > -2) {
+    /* the moon, if it's up (and the clouds let it be seen) */
+    if (s->moon_alt > -2 && s->cover < 0.75f) {
         float x, y;
         sky_xy(s, s->moon_az, s->moon_alt, w, h, &x, &y);
         if (s->sun_alt < -4) glow(px, w, h, x, y, 70, hex(0xC8D0F0), 0.18f);
         sky_paint_moon(s, px, w, h, x, y, 30);
     }
 
-    /* the sun, if it's up: the hills will cut it as it sets */
-    if (s->sun_alt > -2) {
-        float x, y;
+    /* the sun, if it's up: the hills will cut it as it sets; veiled by cloud */
+    if (s->sun_alt > -2 && s->cover < 0.75f) {
+        float x, y, veil = 1 - s->cover;
         sky_xy(s, s->sun_az, s->sun_alt, w, h, &x, &y);
         float hi = clampf(s->sun_alt / 25, 0, 1);
         rgb_t c = mix(hex(0xFF6A30), hex(0xFFF0C8), hi);
-        glow(px, w, h, x, y, 110, mix(hex(0xFF9050), hex(0xFFF4D8), hi), 0.55f);
-        disc(px, w, h, x, y, 22, c, 1);
+        glow(px, w, h, x, y, 110, mix(hex(0xFF9050), hex(0xFFF4D8), hi), 0.55f * veil);
+        disc(px, w, h, x, y, 22, c, veil);
+    }
+
+    /* lightning: a jagged bolt from the clouds to the hills, another each minute */
+    if (s->storm) {
+        uint32_t r = hash(s->minute * 77 + 5);
+        float x = w * 0.2f + (float)(r % (w * 6 / 10)), y = 60;
+        rgb_t bolt = hex(0xFFF8E0);
+        while (y < hz + 10) {
+            r = hash(r);
+            float nx = x + (float)((int)(r % 61) - 30), ny = y + 20 + (float)((r >> 8) % 30);
+            for (int d = -1; d <= 1; d++) stroke(px, w, h, x + d, y, nx + d, ny, bolt, d ? 0.35f : 1);
+            x = nx;
+            y = ny;
+        }
+        glow(px, w, h, x, 60, 160, bolt, 0.18f);
     }
 
     /* the hills: far, middle, near. One pass a column: each pixel the
        nearest ridge's above it, from a table of its colour down the slope
        (32 steps of the bokashi, 16 of grain); the ridge's edge blended */
     enum { STEPS = 32 };
-    static uint16_t shade[3][STEPS][16];
+    static uint16_t shade[3][STEPS][16], snowy[3][16];
     float ph[3][3], fr[3][3], base[3], amp[3];
     rgb_t body[3];
     for (int layer = 0; layer < 3; layer++) {
@@ -252,8 +302,13 @@ void sky_paint(const sky_t *s, uint16_t *px, int w, int h) {
         base[layer] = hz - 18 + layer * 30;
         amp[layer] = 18 + layer * 14;
         body[layer] = mix(hor, ink, 0.45f + layer * 0.28f);
+        body[layer] = mix(body[layer], fogc, s->fog * (0.8f - layer * 0.25f));   /* fog: the far ones fade most */
         rgb_t crest = mix(body[layer], hor, 0.12f);   /* bokashi: a little lighter at the top */
-        for (int k = 0; k < STEPS; k++) grained(mix(crest, body[layer], (float)k / (STEPS - 1)), 0.5f, shade[layer][k]);
+        for (int k = 0; k < STEPS; k++) {
+            rgb_t c = mix(crest, body[layer], (float)k / (STEPS - 1));
+            grained(c, 0.5f, shade[layer][k]);
+        }
+        grained(mix(hex(0xF4F4F0), body[layer], 0.08f + layer * 0.08f), 0.5f, snowy[layer]);   /* snowcaps, shadier near */
     }
     for (int x = 0; x < w; x++) {
         float u = (float)x / w * 2 * PI, ridge[3];
@@ -284,9 +339,55 @@ void sky_paint(const sky_t *s, uint16_t *px, int w, int h) {
                 continue;
             }
             if (l < 0) continue;
+            if (s->snow > 0) {   /* snow on the peaks: above a ragged snow line */
+                float line = base[l] - amp[l] * (0.15f + 0.5f * (1 - s->snow)) + 3 * sinf(x * 0.11f + l * 2) + 2 * sinf(x * 0.37f + l);
+                if (y < line) {
+                    px[y * w + x] = snowy[l][g];
+                    continue;
+                }
+            }
             int k = (int)((y - ridge[l]) * (STEPS - 1) / 140);
             if (k > STEPS - 1) k = STEPS - 1;
             px[y * w + x] = shade[l][k][g];
+        }
+    }
+
+    /* mist: long pale bands over the hills */
+    if (s->fog > 0)
+        for (int k = 0; k < 4; k++) {
+            uint32_t r = hash(s->day * 17 + k * 3 + 1);
+            float cy = hz - 10 + k * 34 + (float)(r % 20), len = 300 + (float)((r >> 8) % 300), cx = (float)((r >> 16) % w);
+            float th = 10 + (float)(r % 8);
+            for (int y = (int)(cy - th); y <= (int)(cy + th); y++) {
+                if (y < 0 || y >= h) continue;
+                float v = (y - cy) / th;
+                for (int x = (int)(cx - len); x <= (int)(cx + len); x++) {
+                    if (x < 0 || x >= w) continue;
+                    float u = (x - cx) / len, e = 1 - u * u - v * v;
+                    if (e > 0) blend(&px[y * w + x], fogc, s->fog * 0.55f * clampf(e * 2, 0, 1));
+                }
+            }
+        }
+
+    /* snow: flakes over everything */
+    if (s->snow > 0) {
+        int n = (int)(700 * s->snow);
+        for (int k = 0; k < n; k++) {
+            uint32_t r = hash(k * 2654435761u + s->minute * 7);
+            float x = (float)(r % w), y = (float)((r >> 11) % h), rad = 1 + (float)((r >> 24) % 3) * 0.6f;
+            disc(px, w, h, x, y, rad, hex(0xFAFAF6), 0.85f);
+        }
+    }
+
+    /* rain: fine straight lines, slanting, the woodblock way */
+    if (s->rain > 0) {
+        bool light = luma(top) < 90;   /* a dark sky: pale lines; a light one: ink */
+        rgb_t c = light ? hex(0xC8D2E0) : hex(0x39465A);
+        int n = (int)(900 * s->rain);
+        for (int k = 0; k < n; k++) {
+            uint32_t r = hash(k * 40503u + s->minute * 13 + 9);
+            float x = (float)(r % (w + 120)) - 60, y = (float)((r >> 11) % (h + 60)) - 30, len = 18 + (float)((r >> 22) % 30);
+            stroke(px, w, h, x, y, x - len * 0.28f, y + len, c, (light ? 0.35f : 0.45f) * (0.5f + 0.5f * s->rain));
         }
     }
 }

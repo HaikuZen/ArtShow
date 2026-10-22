@@ -81,7 +81,7 @@ void app_main(void) {
             { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown },   /* first: the Gallery's menu_select(0) */
             { LV_SYMBOL_LIST "  Gallery", gallery, gallery_shown },
             { LV_SYMBOL_BELL "  Clock", clock, clock_page_shown },
-            { LV_SYMBOL_CHARGE "  Weather", weather, NULL },
+            { LV_SYMBOL_CHARGE "  Weather", weather, weather_page_shown },
             { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_shown },
             { LV_SYMBOL_EYE_OPEN "  Artwork of the Day", artwork, NULL },
             { LV_SYMBOL_SHUFFLE "  Generative", gen, generative_shown },

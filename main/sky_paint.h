@@ -4,8 +4,10 @@
  * (night, blue hour, sunrise, golden hour, day), paper grain, stars at
  * night, the day's path of the sun dotted, the sun and the moon where they
  * are (the moon's phase, its seas, earthshine), and three ridges of hills,
- * the place's own, lighter towards the horizon. Plain C: it paints on a
- * computer too */
+ * the place's own, lighter towards the horizon. And the weather, if given
+ * (the Weather page): cloud cover greying the sky, rain as fine diagonal
+ * lines (Hiroshige's), snow and snowcaps, fog over the hills, lightning.
+ * Plain C: it paints on a computer too */
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -18,8 +20,12 @@ typedef struct {
     float lat;                        /* the hemisphere: which way we look, which side is lit */
     uint32_t place;                   /* the hills' seed */
     uint32_t day;                     /* the clouds' seed: other clouds each day */
-    int ntrack;                       /* the sun's path today: */
+    int ntrack;                       /* the sun's path today (0: none drawn): */
     float track_alt[SKY_TRACK], track_az[SKY_TRACK];
+    /* the weather, 0..1 each; all 0: a fair sky */
+    float cover, rain, snow, fog;
+    bool storm;
+    uint32_t minute;                  /* the rain's and the lightning's seed: they change */
 } sky_t;
 
 /* where an azimuth and altitude are on the picture (x may be off it) */

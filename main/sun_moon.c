@@ -1,5 +1,6 @@
-/* sun_moon.c - the page: the sky as it is now, painted (sky_paint.c) like a
- * woodblock print, full screen, by a task, with the day's numbers on it. The day's
+/* sun_moon.c - the page: the sky as it is now, painted (sky_paint.c, by
+ * sky_view.c's task) like a woodblock print, full screen, with the day's
+ * numbers on it. The day's
  * numbers (two astro_day and the sun's path: ~0.6 s of software doubles,
  * the P4's FPU is single precision) are worked out when it's shown on a new
  * day or for a new place; each minute meanwhile the sun and the moon move
@@ -8,24 +9,19 @@
  * a print's; the rest a caption on the near hill */
 #include "sun_moon.h"
 #include "astro.h"
-#include "sky_paint.h"
+#include "sky_view.h"
 #include "weather.h"
 #include "time_sync.h"
 #include "fonts/art_fonts.h"
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_lvgl_port.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-#define W           1024
-#define H           600
+#define W           SKY_W
+#define H           SKY_H
 #define PAPER       0xF2E8D2
 #define PAPER_TEXT  0xF4ECD8
 #define INK         0x2A2420
@@ -37,12 +33,10 @@
 
 static const char *TAG = "sunmoon";
 
-static lv_obj_t *s_page, *s_img, *s_sub, *s_note;
+static lv_obj_t *s_page, *s_sub, *s_note;
 static lv_obj_t *s_rise, *s_noon, *s_set;
 static lv_obj_t *s_length, *s_change, *s_golden, *s_season, *s_phase, *s_moon_rs, *s_full, *s_new;
 static lv_obj_t *s_body;   /* the text that needs a place and a clock */
-static lv_image_dsc_t s_dsc;
-static uint16_t *s_px;
 static lv_timer_t *s_tick;
 
 static astro_day_t s_day;
@@ -50,17 +44,6 @@ static time_t s_day_start, s_day_end;   /* the day worked out; 0: none */
 static double s_lat = NAN, s_lon = NAN;
 static sky_t s_sky;            /* the day's part (the sun's path, the place): the LVGL task's */
 
-/* the painter: a task, not the LVGL task (a picture is ~0.25 s on the
-   board). It paints in place: a minute later the picture differs by a few
-   pixels, so a half-painted one never shows */
-static TaskHandle_t s_painter;
-static SemaphoreHandle_t s_job_lock;
-static struct {
-    sky_t sky;
-    double lat, lon;
-    time_t now;
-    bool day;              /* a place and a clock: else a night without a moon */
-} s_job;
 
 /* ---- the numbers ---- */
 
@@ -128,7 +111,7 @@ static void work_out_day(time_t now) {
     }
     s_sky.ntrack = SKY_TRACK;
     s_sky.lat = s_lat;
-    s_sky.place = (uint32_t)lround(s_lat * 100) * 40000u + (uint32_t)lround(s_lon * 100 + 20000);
+    s_sky.place = sky_view_place(s_lat, s_lon);
     s_sky.day = (uint32_t)(s_day_start / 86400);
     astro_day_t y;   /* yesterday, for the day length's change */
     astro_day(s_lat, s_lon, midnight(now, -1), s_day_start, now, &y);
@@ -184,55 +167,8 @@ static void work_out_day(time_t now) {
                           days == 1 ? "" : "s");
 }
 
-static void painter(void *arg) {
-    static sky_t sky;
-    for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        if (!s_px) continue;
-        xSemaphoreTake(s_job_lock, portMAX_DELAY);
-        sky = s_job.sky;
-        double lat = s_job.lat, lon = s_job.lon;
-        time_t now = s_job.now;
-        bool day = s_job.day;
-        xSemaphoreGive(s_job_lock);
-        int64_t t0 = esp_timer_get_time();
-        if (day) {
-            double alt, az, lit;
-            astro_sun_pos(lat, lon, now, &alt, &az);
-            sky.sun_alt = alt;
-            sky.sun_az = az;
-            astro_moon_pos(lat, lon, now, &alt, &az);
-            sky.moon_alt = alt;
-            sky.moon_az = az;
-            sky.moon_elong = astro_moon_phase(now, &lit);
-            sky.moon_lit = lit;
-        } else {
-            memset(&sky, 0, sizeof sky);
-            sky.sun_alt = -30;
-            sky.moon_alt = -90;
-            sky.lat = 45;
-        }
-        sky_paint(&sky, s_px, W, H);
-        if (day) sky_paint_moon(&sky, s_px, W, H, MOON_X, MOON_Y, 22);   /* the caption's: up or not */
-        ESP_LOGD(TAG, "painted in %d ms", (int)((esp_timer_get_time() - t0) / 1000));
-        lvgl_port_lock(0);
-        lv_obj_invalidate(s_img);
-        lvgl_port_unlock();
-    }
-}
-
-/* the picture, now: the painter's job */
-static void paint(time_t now) {
-    if (!s_painter) return;
-    xSemaphoreTake(s_job_lock, portMAX_DELAY);
-    s_job.sky = s_sky;
-    s_job.lat = s_lat;
-    s_job.lon = s_lon;
-    s_job.now = now;
-    s_job.day = s_day_start != 0;
-    xSemaphoreGive(s_job_lock);
-    xTaskNotifyGive(s_painter);
-}
+/* the picture, now (sky_view's painter) */
+static void paint(time_t now) { sky_view_paint(&s_sky, s_lat, s_lon, now, s_day_start != 0, MOON_X, MOON_Y, 22); }
 
 /* each minute: the sky; the whole day if it's a new one, or the place moved */
 static void update(void) {
@@ -318,21 +254,7 @@ lv_obj_t *sun_moon_create(lv_obj_t *parent) {
     lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
     lv_obj_set_scrollable(page, false);
 
-    /* the picture: an lv_image on a canvas in PSRAM (64-byte aligned for the PPA) */
-    s_px = heap_caps_aligned_alloc(64, W * H * 2, MALLOC_CAP_SPIRAM);
-    s_img = lv_image_create(page);
-    if (s_px) {
-        s_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-        s_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-        s_dsc.header.w = W;
-        s_dsc.header.h = H;
-        s_dsc.header.stride = W * 2;
-        s_dsc.data = (const uint8_t *)s_px;
-        s_dsc.data_size = W * H * 2;
-        lv_image_set_src(s_img, &s_dsc);
-    } else {
-        ESP_LOGE(TAG, "no memory for the picture");
-    }
+    sky_view_image(page);   /* the picture, shared with the Weather page */
 
     /* the cartouche, top right, as on a print */
     lv_obj_t *cart = lv_obj_create(page);
@@ -392,8 +314,6 @@ lv_obj_t *sun_moon_create(lv_obj_t *parent) {
     s_full = line(s_body, &art_font_16, MINOR, MOON_X + 34, y0 + 4 + 2 * dy, rw);
     s_new = line(s_body, &art_font_16, MINOR, MOON_X + 34, y0 + 4 + 3 * dy, rw);
 
-    s_job_lock = xSemaphoreCreateMutex();
-    if (s_px && s_job_lock && xTaskCreatePinnedToCore(painter, "sky", 4096, NULL, 1, &s_painter, 1) != pdPASS) s_painter = NULL;
     s_tick = lv_timer_create(tick_cb, 60 * 1000, NULL);
     lv_timer_pause(s_tick);
     lv_obj_set_hidden(page, true);
