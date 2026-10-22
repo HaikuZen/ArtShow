@@ -5,8 +5,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ART_W 600   /* the picture fits in this box */
-#define ART_H 460
+#define ART_W 536   /* the picture fits in this box: the book's left page less its margins */
+#define ART_H 420
 
 typedef struct {
     bool random;                   /* "Another", not the day's */

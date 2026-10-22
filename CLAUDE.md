@@ -18,7 +18,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
 | `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page (the place's sky painted with the weather in it); its icons, drawn with LVGL shapes |
-| `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
+| `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day (an art book's spread): see Artwork below |
 | `main/sun_moon.c/.h`, `main/sky_paint.c/.h`, `main/sky_view.c/.h`, `main/astro.c/.h` | the Sun and Moon page, the painted sky (shared with the Weather page), and the astronomy under it: see Sun and Moon below |
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
 | `main/music.c/.h`, `main/music_synth.c/.h` | the Generative page's music: see Generative below |
@@ -317,8 +317,15 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 - The Art Institute of Chicago's API was the first choice; its image server
   answers non-browsers with a Cloudflare challenge (403), so it can't work here.
 - The picture: decoded with `esp_new_jpeg` (software; shrinks while decoding if
-  big) and box-fitted into 600x460, rows 64-byte aligned for the PPA. Two
+  big) and box-fitted into 536x420, rows 64-byte aligned for the PPA. Two
   buffers: one on show, one to fill.
+- `main/artwork_page.c`: an art book open on a walnut table, drawn in the
+  page's draw event (its shadow, the page block's edges, the spine's
+  shade). The left page a plate: the painting on its own average colour,
+  deep, with a faint keyline; the right page cream paper, the catalogue
+  entry ("PLATE <day of the year>", a seal-red rule, the text scrolling);
+  folios from the day of the year. The book ends at y 534: the corner
+  buttons (styled for dark grounds) stay on the table.
 - Save (top right): the full-size picture, streamed to
   `/sdcard/Artwork of the Day/<artist> - <title>.jpg` 16 KB at a time
   (`net_download`; ~300 KB/s, so 5-30 s, with a percentage on the page). Card
