@@ -11,8 +11,8 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 
 | path | what |
 |---|---|
-| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), the gallery, the clock, weather, sun and moon, artwork, generative, album wall and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
-| `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time. New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
+| `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), Diffuse (its drop), the gallery, the clock, weather, sun and moon, artwork, generative, album wall and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
+| `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time, up to `MAX_PAGES` (16; more are dropped). New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
 | `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) with notes per day |
 | `main/notes.c/.h` | the calendar's notes, in their own SQLite database: see Clock below |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
@@ -27,6 +27,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
 | `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page, and night mode: see Settings below |
 | `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
+| `main/diffuse.c/.h`, `main/diffuse_page.c/.h` | the drop left of "?": diffusion effects on the picture on show. See Diffuse below |
 | `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file; redirects followed; a connection kept for a run of calls to one server), JSON path helpers, cJSON in PSRAM |
 | `main/fonts/` | Montserrat 16/20/24/32 with Latin-1, Latin Extended-A and typographic punctuation (`art_font_*`): the museum's names. LVGL's built-in fonts are ASCII only |
 | `main/slideshow.c/.h` | the microSD picture slideshow: see Slideshow below |
@@ -325,6 +326,33 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 - A TLS connection to Wikimedia costs ~2 s (ECDSA in software on rev v1.x):
   a lookup keeps one open for its calls (`net_keep_t`): 0.3-0.9 s each after
   the first. A lookup is ~4-6 s.
+
+## Diffuse
+
+- `main/diffuse.c`: plain C (it renders on a computer too: test there on a
+  1024x600 RGB565 file first). Each effect runs a slice at a time:
+  - dithering (error diffusion): Newsprint (grey, Atkinson, black on paper),
+    E-paper (six inks), Game Boy (four greens), Its 8 colours (k-means on
+    4096 pixels); Floyd-Steinberg back and forth. ~1 s on the board.
+  - Melt: Perona-Malik anisotropic diffusion, 48 passes (kappa 30, lambda
+    0.24), channels interleaved in 12-bit fixed point, each edge's flux
+    worked out once: 15 s (was 94 s with planes, three times the work, at -Og).
+  - Coral: Gray-Scott reaction-diffusion on a grid a third the size, Q15
+    integers, k from the picture's brightness (0.060 dark: dense, 0.0685
+    light: sparse; a sweep showed 0.062 covers half), 3 x 3 seeds of v = 1
+    (single cells or weaker seeds just die), 1000 steps: ~50 s. Float,
+    16.16 and Q15 all took 57-67 s for 1200: it's the CPU (~0.5 us a cell
+    a step), not memory. Redrawn when the last redraw took under a fifth
+    of the time (130 ms each).
+  - `diffuse.c` builds at -O2 (`main/CMakeLists.txt`): the app is -Og.
+    The P4 measured: a float op ~6 cycles; a 1.2 MB PSRAM copy 28 ms.
+- `main/diffuse_page.c`: a view over the slideshow (paused; its background
+  thumbnails off), the picture copied in by the effect's task (after any
+  run left over has stopped), a task on core 1 at priority 1: 100 ms
+  slices and a tick back (at 100 Hz a tick is 10 ms: 25 ms slices lost a
+  third). Save: JPEG 4:4:4 q92 into `/sdcard/Diffused/<name> - <effect>.jpg`
+  and `slideshow_added`. Testing Save on the board puts files in the
+  slideshow: remove them after (the Rescan drops them from the index).
 
 ## Sun and Moon
 

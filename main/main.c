@@ -14,6 +14,7 @@
 #include "artwork.h"
 #include "artwork_page.h"
 #include "now_showing.h"
+#include "diffuse_page.h"
 #include "sun_moon.h"
 #include "gallery.h"
 #include "generative.h"
@@ -38,6 +39,7 @@ static const char *TAG = "app";
 static void slideshow_shown(bool shown) {
     slideshow_pause(!shown);
     now_showing_slideshow(shown);
+    diffuse_page_slideshow(shown);
 }
 
 static void nvs_init(void) {
@@ -64,6 +66,7 @@ void app_main(void) {
         lv_obj_t *scr = lv_screen_active();
         slideshow_start(scr);
         now_showing_create(scr);                    /* over the slideshow: its "?" button, top right */
+        diffuse_page_create(scr);                   /* ... and the drop left of it */
         lv_obj_t *gallery = gallery_create(scr);
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
         lv_obj_t *weather = weather_page_create(scr);
