@@ -13,7 +13,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 |---|---|
 | `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), Diffuse (its drop), the gallery, the clock, weather, sun and moon, artwork, generative, album wall and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
 | `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time, up to `MAX_PAGES` (16; more are dropped). New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
-| `main/clock_page.c/.h` | the clock page: an analog clock (`lv_scale` with line hands), the digital time and date, the month's calendar (weeks from Monday) with notes per day |
+| `main/clock_page.c/.h` | the clock page, a Bauhaus poster: an analog clock after Max Bill's (drawn), the time and date, the month's calendar (weeks from Monday) with notes per day |
 | `main/notes.c/.h` | the calendar's notes, in their own SQLite database: see Clock below |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |
 | `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
@@ -204,10 +204,24 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   inits esp_netif) and again on each `IP_EVENT_STA_GOT_IP`: its first tries
   fail before there's an IP and it then waits long to retry (27 s, measured);
   restarted, the time comes ~3 s after the IP. It re-syncs every hour.
-- `main/clock_page.c`: until the first sync the time reads `--:--:--` and the
-  calendar is hidden (the clock says 1970). A 200 ms LVGL timer moves the
-  hands, only while the page is shown; a new day resets the calendar to the
-  current month (its arrows show others meanwhile).
+- `main/clock_page.c`: a Bauhaus poster. On a charcoal ground, flat
+  shapes in the primaries drawn by the page's own draw event (a red disc
+  behind the clock, a blue bar and a yellow disc, cream bars). A cream
+  ground lost the corner buttons (styled for dark pages: a faint tint, a
+  grey icon) and the grey text; black squares under them were tried and
+  disliked; the clock after Max
+  Bill's, drawn in its own draw event (bar markers, no numerals, square
+  black hands, a red second hand with a disc), invalidated once a second;
+  the time and the date (lowercase) in cream, on the red disc and past it. The calendar flat
+  in a black frame, its day cells restyled by a `LV_EVENT_DRAW_TASK_ADDED`
+  callback added after LVGL's own (today a red disc, a day with a note
+  blue, weekday names and other months' days grey). Until the first sync
+  the time reads `--:--`, the face has no hands and the calendar is hidden
+  (the clock says 1970). A 200 ms LVGL timer only while shown; a new day
+  resets the calendar to the current month (its arrows show others
+  meanwhile). Test it from the LVGL task (an `lv_timer`), not from
+  `app_main`: showing it reads the notes database, which overflows the
+  main task's stack.
 - Notes: tap a day on the calendar for its note (an editor over everything
   on `lv_layer_top`, with the keyboard; Save, Delete, Close). Days with a note
   are highlighted (`lv_calendar_set_highlighted_dates`, every month); today's
