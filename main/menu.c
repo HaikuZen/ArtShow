@@ -2,7 +2,7 @@
  * picking one hides the page on show and shows that one. */
 #include "menu.h"
 
-#define MAX_PAGES 8
+#define MAX_PAGES 16
 
 static menu_page_t s_pages[MAX_PAGES];
 static int s_n, s_cur;
@@ -51,11 +51,12 @@ void menu_create(lv_obj_t *parent, const menu_page_t *pages, int n) {
     lv_obj_set_size(s_list, 280, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(s_list, 10, 0);
-    lv_obj_set_style_pad_row(s_list, 8, 0);
+    lv_obj_set_style_pad_row(s_list, 6, 0);
+    lv_obj_set_style_max_height(s_list, 600 - 64 - 8, 0);   /* the screen below the button: more pages scroll */
     lv_obj_set_style_bg_color(s_list, lv_color_hex(0x0D1B2A), 0);
     lv_obj_set_style_bg_opa(s_list, LV_OPA_90, 0);
     lv_obj_set_style_border_color(s_list, lv_color_hex(0x415A77), 0);
-    lv_obj_set_scrollable(s_list, false);
+    lv_obj_set_scrollable(s_list, true);
     lv_obj_align_to(s_list, b, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 8);
     for (int k = 0; k < s_n; k++) {
         lv_obj_t *item = lv_button_create(s_list);
@@ -63,6 +64,7 @@ void menu_create(lv_obj_t *parent, const menu_page_t *pages, int n) {
         lv_obj_set_style_bg_color(item, lv_color_hex(0x1B263B), 0);
         lv_obj_set_style_bg_color(item, lv_color_hex(0x415A77), LV_STATE_CHECKED);   /* the page on show */
         lv_obj_set_style_shadow_width(item, 0, 0);
+        lv_obj_set_style_pad_ver(item, 8, 0);   /* ten pages in the screen's height */
         lv_obj_t *il = lv_label_create(item);
         lv_label_set_text(il, s_pages[k].label);
         lv_obj_set_style_text_font(il, &lv_font_montserrat_24, 0);
