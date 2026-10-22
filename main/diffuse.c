@@ -11,6 +11,11 @@
  *    difference (one edge for all: no colour fringes), a table. 12-bit
  *    fixed point, the channels interleaved; each edge's flux worked out
  *    once, from the values before the pass
+ *  - 8-bit: the picture in 6 x 6 blocks (their average, a little more
+ *    saturated and contrasted), each the nearest of the picture's own 16
+ *    (k-means on the blocks; PICO-8's fixed 16 turned the sky lavender and
+ *    the greens grey) after a 4 x 4 Bayer offset (the old consoles' ordered
+ *    dither), drawn as hard squares
  *  - Gray-Scott: u + 2v -> 3v on a grid a third the size, u fed at f, v
  *    killed at k; k follows the picture (dark: low, the coral grows; light:
  *    high, it dies back). Shown at full size: v interpolated, the ink the
@@ -97,28 +102,15 @@ static void start_gameboy(diffuse_t *d) {
     t->grey = true;
 }
 
-/* the picture's eight: k-means on 4096 pixels, from its brightest, darkest
- * and spread start */
-static void start_own(diffuse_t *d) {
-    dither_t *t = dither_init(d);
-    enum { N = 4096 };
-    static int16_t px[N][3];
-    uint32_t s = d->seed | 1;
-    for (int i = 0; i < N; i++) {
-        int r, g, b;
-        unpack(d->src[rnd(&s) % (uint32_t)(d->w * d->h)], &r, &g, &b);
-        px[i][0] = r;
-        px[i][1] = g;
-        px[i][2] = b;
-    }
-    int k = INKS;
-    float c[INKS][3];
+/* k colours (up to 16) for n pixels: k-means, 8 rounds, from a spread start */
+static void kmeans(int16_t (*px)[3], int n, int k, int16_t (*out)[3], uint32_t *s) {
+    float c[16][3];
     for (int j = 0; j < k; j++)
-        for (int ch = 0; ch < 3; ch++) c[j][ch] = px[(j * N) / k + (int)(rnd(&s) % (N / k))][ch];
+        for (int ch = 0; ch < 3; ch++) c[j][ch] = px[(j * n) / k + (int)(rnd(s) % (uint32_t)(n / k))][ch];
     for (int it = 0; it < 8; it++) {
-        float sum[INKS][3] = { { 0 } };
-        int cnt[INKS] = { 0 };
-        for (int i = 0; i < N; i++) {
+        float sum[16][3] = { { 0 } };
+        int cnt[16] = { 0 };
+        for (int i = 0; i < n; i++) {
             int best = 0;
             float bd = 1e30f;
             for (int j = 0; j < k; j++) {
@@ -136,11 +128,27 @@ static void start_own(diffuse_t *d) {
             if (cnt[j])
                 for (int ch = 0; ch < 3; ch++) c[j][ch] = sum[j][ch] / cnt[j];
             else   /* an empty one: a random pixel */
-                for (int ch = 0; ch < 3; ch++) c[j][ch] = px[rnd(&s) % N][ch];
+                for (int ch = 0; ch < 3; ch++) c[j][ch] = px[rnd(s) % (uint32_t)n][ch];
     }
-    t->n = k;
     for (int j = 0; j < k; j++)
-        for (int ch = 0; ch < 3; ch++) t->ink[j][ch] = (int16_t)(c[j][ch] + 0.5f);
+        for (int ch = 0; ch < 3; ch++) out[j][ch] = (int16_t)(c[j][ch] + 0.5f);
+}
+
+/* the picture's eight: k-means on 4096 of its pixels */
+static void start_own(diffuse_t *d) {
+    dither_t *t = dither_init(d);
+    enum { N = 4096 };
+    static int16_t px[N][3];
+    uint32_t s = d->seed | 1;
+    for (int i = 0; i < N; i++) {
+        int r, g, b;
+        unpack(d->src[rnd(&s) % (uint32_t)(d->w * d->h)], &r, &g, &b);
+        px[i][0] = r;
+        px[i][1] = g;
+        px[i][2] = b;
+    }
+    t->n = INKS;
+    kmeans(px, N, INKS, t->ink, &s);
 }
 
 static bool dither_step(diffuse_t *d, uint32_t (*ms)(void), uint32_t deadline) {
@@ -301,6 +309,89 @@ static bool pm_step(diffuse_t *d, uint32_t (*ms)(void), uint32_t deadline) {
         if ((t->y & 7) == 0 && ms() >= deadline) return t->pass >= PM_PASSES;
     }
     return true;
+}
+
+/* ------------------------------------------------------------------ 8-bit */
+
+#define PX     6    /* the block: 1024 x 600 is ~170 x 100 of them */
+#define PX_PAL 16   /* colours */
+
+typedef struct {
+    int by, nbx, nby;
+    int16_t pal[PX_PAL][3];
+    int16_t (*blk)[3];   /* each block's colour, livelier: nbx x nby */
+} px_t;
+
+static size_t px_mem(int w, int h) { return sizeof(px_t) + (size_t)((w + PX - 1) / PX) * ((h + PX - 1) / PX) * 6 + 16; }
+
+static void px_start(diffuse_t *d) {
+    px_t *t = d->mem;
+    t->nbx = (d->w + PX - 1) / PX;
+    t->nby = (d->h + PX - 1) / PX;
+    t->blk = (int16_t (*)[3])(t + 1);
+    for (int by = 0; by < t->nby; by++)
+        for (int bx = 0; bx < t->nbx; bx++) {
+            int x0 = bx * PX, y0 = by * PX, x1 = x0 + PX < d->w ? x0 + PX : d->w, y1 = y0 + PX < d->h ? y0 + PX : d->h;
+            int r = 0, g = 0, b = 0, n = 0;
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++) {
+                    int pr, pg, pb;
+                    unpack(d->src[y * d->w + x], &pr, &pg, &pb);
+                    r += pr;
+                    g += pg;
+                    b += pb;
+                    n++;
+                }
+            r /= n;
+            g /= n;
+            b /= n;
+            /* livelier: away from the grey (saturation), away from the middle (contrast) */
+            int l = (r * 77 + g * 150 + b * 29) >> 8;
+            int16_t *o = t->blk[by * t->nbx + bx];
+            o[0] = 128 + ((l + (r - l) * 13 / 10) - 128) * 11 / 10;
+            o[1] = 128 + ((l + (g - l) * 13 / 10) - 128) * 11 / 10;
+            o[2] = 128 + ((l + (b - l) * 13 / 10) - 128) * 11 / 10;
+        }
+    /* the palette: the picture's sixteen, from every few blocks */
+    enum { N = 4096 };
+    static int16_t sample[N][3];
+    uint32_t s = d->seed | 1;
+    int nb = t->nbx * t->nby;
+    for (int i = 0; i < N; i++) memcpy(sample[i], t->blk[rnd(&s) % (uint32_t)nb], sizeof sample[i]);
+    kmeans(sample, N, PX_PAL, t->pal, &s);
+    t->by = 0;
+    d->done = 0;
+    d->total = t->nby;
+    snprintf(d->what, sizeof d->what, "rows of blocks");
+}
+
+static bool px_step(diffuse_t *d, uint32_t (*ms)(void), uint32_t deadline) {
+    static const int8_t BAYER[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
+    px_t *t = d->mem;
+    while (t->by < t->nby) {
+        int y0 = t->by * PX, y1 = y0 + PX < d->h ? y0 + PX : d->h;
+        for (int bx = 0; bx < t->nbx; bx++) {
+            int x0 = bx * PX, x1 = x0 + PX < d->w ? x0 + PX : d->w;
+            const int16_t *c = t->blk[t->by * t->nbx + bx];
+            int off = (BAYER[t->by & 3][bx & 3] - 8) * 3 / 2;   /* -12 .. +10: the old consoles' ordered dither */
+            int r = c[0] + off, g = c[1] + off, b = c[2] + off;
+            int best = 0, bd = 1 << 30;
+            for (int j = 0; j < PX_PAL; j++) {
+                int dr = r - t->pal[j][0], dg = g - t->pal[j][1], db = b - t->pal[j][2];
+                int dd = 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+                if (dd < bd) {
+                    bd = dd;
+                    best = j;
+                }
+            }
+            uint16_t px = pack(t->pal[best][0], t->pal[best][1], t->pal[best][2]);
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++) d->dst[y * d->w + x] = px;
+        }
+        d->done = ++t->by;
+        if ((t->by & 3) == 0 && ms() >= deadline) break;
+    }
+    return t->by >= t->nby;
 }
 
 /* ------------------------------------------------------------ Gray-Scott */
@@ -467,6 +558,7 @@ const diffuse_fx_t diffuse_fx[] = {
     { "E-paper", dither_mem, start_epaper, dither_step },
     { "Game Boy", dither_mem, start_gameboy, dither_step },
     { "Its 8 colours", dither_mem, start_own, dither_step },
+    { "8-bit", px_mem, px_start, px_step },
     { "Melt", pm_mem, pm_start, pm_step },
     { "Coral", rd_mem, rd_start, rd_step },
 };

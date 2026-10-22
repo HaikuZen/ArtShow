@@ -334,6 +334,10 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   - dithering (error diffusion): Newsprint (grey, Atkinson, black on paper),
     E-paper (six inks), Game Boy (four greens), Its 8 colours (k-means on
     4096 pixels); Floyd-Steinberg back and forth. ~1 s on the board.
+  - 8-bit: 6 x 6 blocks (averaged, a little more saturated and
+    contrasted), the picture's own 16 colours (k-means on the blocks:
+    PICO-8's fixed 16 turned the sky lavender), a 4 x 4 Bayer offset, hard
+    squares. 0.2 s.
   - Melt: Perona-Malik anisotropic diffusion, 48 passes (kappa 30, lambda
     0.24), channels interleaved in 12-bit fixed point, each edge's flux
     worked out once: 15 s (was 94 s with planes, three times the work, at -Og).
