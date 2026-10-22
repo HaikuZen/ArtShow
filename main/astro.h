@@ -29,6 +29,10 @@ typedef struct {
 void astro_day(double lat, double lon, time_t day_start, time_t day_end, time_t now, astro_day_t *out);
 /* the sun's altitude, degrees (geometric: no refraction) */
 double astro_sun_alt(double lat, double lon, time_t t);
+/* where the sun and the moon are in the sky at t: altitude (degrees,
+ * geometric) and azimuth (degrees from north, east 90) */
+void astro_sun_pos(double lat, double lon, time_t t, double *alt, double *az);
+void astro_moon_pos(double lat, double lon, time_t t, double *alt, double *az);
 /* the moon's elongation east of the sun at t, degrees 0..360 (< 180:
  * waxing), and its lit fraction 0..1 */
 double astro_moon_phase(time_t t, double *lit);

@@ -87,6 +87,27 @@ static double altitude(const pos_t *p, double lat, double lon, time_t t) {
     return asin(sin(lat * RAD) * sin(p->dec * RAD) + cos(lat * RAD) * cos(p->dec * RAD) * cos(ha)) * DEG;
 }
 
+/* altitude and azimuth (from north, east 90) */
+static void alt_az(const pos_t *p, double lat, double lon, time_t t, double *alt, double *az) {
+    double jd = t / 86400.0 + 2440587.5;
+    double lst = rev(280.46061837 + 360.98564736629 * (jd - 2451545.0) + lon);
+    double ha = (lst - p->ra) * RAD, la = lat * RAD, de = p->dec * RAD;
+    *alt = asin(sin(la) * sin(de) + cos(la) * cos(de) * cos(ha)) * DEG;
+    *az = rev(atan2(sin(ha), cos(ha) * sin(la) - tan(de) * cos(la)) * DEG + 180.0);
+}
+
+void astro_sun_pos(double lat, double lon, time_t t, double *alt, double *az) {
+    pos_t p;
+    sun(days(t), &p);
+    alt_az(&p, lat, lon, t, alt, az);
+}
+
+void astro_moon_pos(double lat, double lon, time_t t, double *alt, double *az) {
+    pos_t p;
+    moon(days(t), &p);
+    alt_az(&p, lat, lon, t, alt, az);
+}
+
 double astro_sun_alt(double lat, double lon, time_t t) {
     pos_t p;
     sun(days(t), &p);

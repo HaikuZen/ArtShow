@@ -1,120 +1,66 @@
-/* sun_moon.c - the page. The day's numbers (two astro_day: ~0.56 s of
- * software doubles, the P4's FPU is single precision) are worked out when
- * it's shown on a new day or for a new place;
- * each minute meanwhile only the sun's dot and the moon's phase move. */
+/* sun_moon.c - the page: the sky as it is now, painted (sky_paint.c) like a
+ * woodblock print, full screen, by a task, with the day's numbers on it. The day's
+ * numbers (two astro_day and the sun's path: ~0.6 s of software doubles,
+ * the P4's FPU is single precision) are worked out when it's shown on a new
+ * day or for a new place; each minute meanwhile the sun and the moon move
+ * and the picture is painted again. The text: the times of sunrise, noon
+ * and sunset on the horizon where they happen; the title in a cartouche, as
+ * a print's; the rest a caption on the near hill */
 #include "sun_moon.h"
 #include "astro.h"
+#include "sky_paint.h"
 #include "weather.h"
 #include "time_sync.h"
 #include "fonts/art_fonts.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_lvgl_port.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-#define BG          0x0D1B2A
-#define CARD_BG     0x1B263B
-#define RIM         0x415A77
-#define MINOR       0x778DA9
-#define TEXT        0xE0F0FF
-#define SUN         0xFFC93C
-#define GOLDEN      0xFF9F43
-#define MOON_LIT    0xE8E4C9
-#define MOON_DARK   0x26324A
-#define CHART_W     476
-#define CHART_H     150
-#define SAMPLES     97      /* the sun's altitude every 15 minutes */
-#define MOON_D      170
+#define W           1024
+#define H           600
+#define PAPER       0xF2E8D2
+#define PAPER_TEXT  0xF4ECD8
+#define INK         0x2A2420
+#define SEAL        0xA8322A    /* the cartouche's border: a seal's red */
+#define MINOR       0xC8BCA8
+#define GOLDEN      0xFFB45A
+#define MOON_X      546         /* the caption's moon */
+#define MOON_Y      540
 
 static const char *TAG = "sunmoon";
 
-static lv_obj_t *s_page, *s_sub, *s_note, *s_body, *s_chart, *s_moon;
-static lv_obj_t *s_rise, *s_noon, *s_set, *s_length, *s_change, *s_golden, *s_noon_alt;
-static lv_obj_t *s_phase, *s_lit_label, *s_moon_rs, *s_full, *s_new, *s_season;
+static lv_obj_t *s_page, *s_img, *s_sub, *s_note;
+static lv_obj_t *s_rise, *s_noon, *s_set;
+static lv_obj_t *s_length, *s_change, *s_golden, *s_season, *s_phase, *s_moon_rs, *s_full, *s_new;
+static lv_obj_t *s_body;   /* the text that needs a place and a clock */
+static lv_image_dsc_t s_dsc;
+static uint16_t *s_px;
 static lv_timer_t *s_tick;
 
 static astro_day_t s_day;
 static time_t s_day_start, s_day_end;   /* the day worked out; 0: none */
 static double s_lat = NAN, s_lon = NAN;
-static float s_alt[SAMPLES];            /* the chart's curve */
-static double s_lit, s_elong;           /* the moon now */
-static time_t s_now;
+static sky_t s_sky;            /* the day's part (the sun's path, the place): the LVGL task's */
 
-/* ---- drawing ---- */
-
-static void line(lv_layer_t *layer, float x1, float y1, float x2, float y2, int w, uint32_t c) {
-    lv_draw_line_dsc_t d;
-    lv_draw_line_dsc_init(&d);
-    d.p1.x = x1;
-    d.p1.y = y1;
-    d.p2.x = x2;
-    d.p2.y = y2;
-    d.width = w;
-    d.color = lv_color_hex(c);
-    d.round_start = d.round_end = 1;
-    lv_draw_line(layer, &d);
-}
-
-static void rect(lv_layer_t *layer, int32_t x1, int32_t y1, int32_t x2, int32_t y2, int32_t radius, uint32_t c) {
-    lv_draw_rect_dsc_t d;
-    lv_draw_rect_dsc_init(&d);
-    d.bg_color = lv_color_hex(c);
-    d.radius = radius;
-    lv_area_t a = { x1, y1, x2, y2 };
-    lv_draw_rect(layer, &d, &a);
-}
-
-/* the sun's altitude through the day: above the horizon in gold, below dim;
-   a dot for now */
-static void chart_draw(lv_event_t *e) {
-    if (!s_day_start) return;
-    lv_obj_t *o = lv_event_get_current_target_obj(e);
-    lv_layer_t *layer = lv_event_get_layer(e);
-    lv_area_t a;
-    lv_obj_get_content_coords(o, &a);
-    float top = s_day.noon_alt > 10 ? s_day.noon_alt + 6 : 16, bottom = top - 100;   /* 100 degrees tall */
-    float lo = 1e9;
-    for (int k = 0; k < SAMPLES; k++) lo = fminf(lo, s_alt[k]);
-    if (lo - 4 > bottom) bottom = lo - 4;
-    float w = lv_area_get_width(&a) - 1, h = lv_area_get_height(&a) - 1;
-#define X(k) (a.x1 + (k) * w / (SAMPLES - 1))
-#define Y(alt) (a.y1 + (top - (alt)) * h / (top - bottom))
-    line(layer, a.x1, Y(0), a.x2, Y(0), 1, MINOR);   /* the horizon */
-    for (int k = 0; k + 1 < SAMPLES; k++) {
-        bool up = s_alt[k] > 0 || s_alt[k + 1] > 0;
-        line(layer, X(k), Y(s_alt[k]), X(k + 1), Y(s_alt[k + 1]), up ? 3 : 2, up ? SUN : RIM);
-    }
-    if (s_now >= s_day_start && s_now < s_day_end) {
-        float f = (float)(s_now - s_day_start) / (s_day_end - s_day_start) * (SAMPLES - 1);
-        float alt = astro_sun_alt(s_lat, s_lon, s_now);
-        int32_t x = X(f), y = Y(alt);
-        rect(layer, x - 7, y - 7, x + 7, y + 7, LV_RADIUS_CIRCLE, alt > -0.833 ? SUN : RIM);
-    }
-#undef X
-#undef Y
-}
-
-/* the moon: a dark disk, and its lit part row by row: from the limb to the
-   terminator (an ellipse, half as wide as cos of the phase). Waxing, the
-   right side is lit, seen from the northern hemisphere */
-static void moon_draw(lv_event_t *e) {
-    if (!s_day_start) return;
-    lv_obj_t *o = lv_event_get_current_target_obj(e);
-    lv_layer_t *layer = lv_event_get_layer(e);
-    lv_area_t a;
-    lv_obj_get_coords(o, &a);
-    float r = lv_area_get_width(&a) / 2.0f, cx = a.x1 + r, cy = a.y1 + r;
-    rect(layer, a.x1, a.y1, a.x2, a.y2, LV_RADIUS_CIRCLE, MOON_DARK);
-    bool right = (s_elong < 180) == (s_lat >= 0);   /* the lit side */
-    float c = 1 - 2 * (float)s_lit;                 /* the terminator, as a share of the half width */
-    for (int32_t y = a.y1 + 1; y < a.y2; y++) {
-        float dy = y + 0.5f - cy, half = sqrtf(fmaxf(r * r - dy * dy, 0));
-        float x1 = right ? cx + c * half : cx - half, x2 = right ? cx + half : cx - c * half;
-        if (x2 - x1 >= 1) rect(layer, lroundf(x1), y, lroundf(x2) - 1, y, 0, MOON_LIT);
-    }
-}
+/* the painter: a task, not the LVGL task (a picture is ~0.25 s on the
+   board). It paints in place: a minute later the picture differs by a few
+   pixels, so a half-painted one never shows */
+static TaskHandle_t s_painter;
+static SemaphoreHandle_t s_job_lock;
+static struct {
+    sky_t sky;
+    double lat, lon;
+    time_t now;
+    bool day;              /* a place and a clock: else a night without a moon */
+} s_job;
 
 /* ---- the numbers ---- */
 
@@ -152,25 +98,53 @@ static time_t midnight(time_t t, int add_days) {
     return mktime(&tm);
 }
 
+/* a time on the horizon, under where it happens (t's sun azimuth) */
+static void on_horizon(lv_obj_t *l, time_t t, int row) {
+    lv_obj_set_hidden(l, !t);
+    if (!t) return;
+    double alt, az;
+    float x, y;
+    astro_sun_pos(s_lat, s_lon, t, &alt, &az);
+    sky_xy(&s_sky, az, 0, W, H, &x, &y);
+    lv_obj_update_layout(l);
+    int lw = lv_obj_get_width(l);
+    int lx = (int)x - lw / 2;
+    if (lx < 84) lx = 84;   /* clear of the corners */
+    if (lx > W - 84 - lw) lx = W - 84 - lw;
+    lv_obj_set_pos(l, lx, sky_horizon(H) + 34 + row * 36);
+}
+
 /* the whole day: once a day, or for a new place */
 static void work_out_day(time_t now) {
     int64_t t0 = esp_timer_get_time();
     s_day_start = midnight(now, 0);
     s_day_end = midnight(now, 1);
     astro_day(s_lat, s_lon, s_day_start, s_day_end, now, &s_day);
-    for (int k = 0; k < SAMPLES; k++)
-        s_alt[k] = astro_sun_alt(s_lat, s_lon, s_day_start + (s_day_end - s_day_start) * k / (SAMPLES - 1));
+    for (int k = 0; k < SKY_TRACK; k++) {
+        double alt, az;
+        astro_sun_pos(s_lat, s_lon, s_day_start + (s_day_end - s_day_start) * k / (SKY_TRACK - 1), &alt, &az);
+        s_sky.track_alt[k] = alt;
+        s_sky.track_az[k] = az;
+    }
+    s_sky.ntrack = SKY_TRACK;
+    s_sky.lat = s_lat;
+    s_sky.place = (uint32_t)lround(s_lat * 100) * 40000u + (uint32_t)lround(s_lon * 100 + 20000);
+    s_sky.day = (uint32_t)(s_day_start / 86400);
     astro_day_t y;   /* yesterday, for the day length's change */
     astro_day(s_lat, s_lon, midnight(now, -1), s_day_start, now, &y);
     ESP_LOGI(TAG, "worked out in %d ms", (int)((esp_timer_get_time() - t0) / 1000));
 
     char a[32], b[32], c[32];
     hm(a, sizeof a, s_day.sunrise);
-    lv_label_set_text(s_rise, a);
+    lv_label_set_text_fmt(s_rise, "sunrise  %s", a);
     hm(a, sizeof a, s_day.noon);
-    lv_label_set_text(s_noon, a);
+    lv_label_set_text_fmt(s_noon, "noon  %s  \xC2\xB7  %d\xC2\xB0 high", a, (int)lround(s_day.noon_alt));
     hm(a, sizeof a, s_day.sunset);
-    lv_label_set_text(s_set, a);
+    lv_label_set_text_fmt(s_set, "sunset  %s", a);
+    /* the noon one a row lower: the rise and set ones may come near it */
+    on_horizon(s_rise, s_day.sunrise, 0);
+    on_horizon(s_noon, s_day.noon && s_day.noon_alt > 0 ? s_day.noon : 0, 1);
+    on_horizon(s_set, s_day.sunset, 0);
 
     if (s_day.sunrise && s_day.sunset && s_day.sunset > s_day.sunrise) {
         long len = s_day.sunset - s_day.sunrise, d = len - (y.sunset && y.sunrise ? y.sunset - y.sunrise : len);
@@ -189,31 +163,78 @@ static void work_out_day(time_t now) {
         char d[16], e[16];
         hm(d, sizeof d, s_day.golden_pm[0]);
         hm(e, sizeof e, s_day.golden_pm[1]);
-        lv_label_set_text_fmt(s_golden, "Golden hours %s\xE2\x80\x93%s and %s\xE2\x80\x93%s", a, b, d, e);
+        lv_label_set_text_fmt(s_golden, "Golden hours  %s\xE2\x80\x93%s  and  %s\xE2\x80\x93%s", a, b, d, e);
     } else {
         lv_label_set_text(s_golden, "No golden hour today");
     }
-    lv_label_set_text_fmt(s_noon_alt, "At noon the sun is %d\xC2\xB0 high", (int)lround(s_day.noon_alt));
 
     hm(a, sizeof a, s_day.moonrise);
     hm(b, sizeof b, s_day.moonset);
-    lv_label_set_text_fmt(s_moon_rs, "Moonrise %s   \xC2\xB7   Moonset %s", a, b);
+    lv_label_set_text_fmt(s_moon_rs, "Moonrise %s  \xC2\xB7  Moonset %s", a, b);
     when(a, sizeof a, s_day.next_full);
     when(b, sizeof b, s_day.next_new);
-    lv_label_set_text_fmt(s_full, "Full moon   %s", a);
-    lv_label_set_text_fmt(s_new, "New moon   %s", b);
+    lv_label_set_text_fmt(s_full, "Full moon  %s", a);
+    lv_label_set_text_fmt(s_new, "New moon  %s", b);
 
     static const char *north[] = { "Spring equinox", "Summer solstice", "Autumn equinox", "Winter solstice" };
     static const char *south[] = { "Autumn equinox", "Winter solstice", "Spring equinox", "Summer solstice" };
     long days = lround((double)(midnight(s_day.next_season, 0) - s_day_start) / 86400);
     when(a, sizeof a, s_day.next_season);
-    lv_label_set_text_fmt(s_season, "%s   %s   \xE2\x80\x94   in %ld day%s", (s_lat >= 0 ? north : south)[s_day.season], a,
-                          days, days == 1 ? "" : "s");
-    lv_obj_invalidate(s_chart);
+    lv_label_set_text_fmt(s_season, "%s  %s, in %ld day%s", (s_lat >= 0 ? north : south)[s_day.season], a, days,
+                          days == 1 ? "" : "s");
 }
 
-/* each minute: the moon's phase and the sun's dot; the whole day if it's a
-   new one, or the place moved */
+static void painter(void *arg) {
+    static sky_t sky;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (!s_px) continue;
+        xSemaphoreTake(s_job_lock, portMAX_DELAY);
+        sky = s_job.sky;
+        double lat = s_job.lat, lon = s_job.lon;
+        time_t now = s_job.now;
+        bool day = s_job.day;
+        xSemaphoreGive(s_job_lock);
+        int64_t t0 = esp_timer_get_time();
+        if (day) {
+            double alt, az, lit;
+            astro_sun_pos(lat, lon, now, &alt, &az);
+            sky.sun_alt = alt;
+            sky.sun_az = az;
+            astro_moon_pos(lat, lon, now, &alt, &az);
+            sky.moon_alt = alt;
+            sky.moon_az = az;
+            sky.moon_elong = astro_moon_phase(now, &lit);
+            sky.moon_lit = lit;
+        } else {
+            memset(&sky, 0, sizeof sky);
+            sky.sun_alt = -30;
+            sky.moon_alt = -90;
+            sky.lat = 45;
+        }
+        sky_paint(&sky, s_px, W, H);
+        if (day) sky_paint_moon(&sky, s_px, W, H, MOON_X, MOON_Y, 22);   /* the caption's: up or not */
+        ESP_LOGD(TAG, "painted in %d ms", (int)((esp_timer_get_time() - t0) / 1000));
+        lvgl_port_lock(0);
+        lv_obj_invalidate(s_img);
+        lvgl_port_unlock();
+    }
+}
+
+/* the picture, now: the painter's job */
+static void paint(time_t now) {
+    if (!s_painter) return;
+    xSemaphoreTake(s_job_lock, portMAX_DELAY);
+    s_job.sky = s_sky;
+    s_job.lat = s_lat;
+    s_job.lon = s_lon;
+    s_job.now = now;
+    s_job.day = s_day_start != 0;
+    xSemaphoreGive(s_job_lock);
+    xTaskNotifyGive(s_painter);
+}
+
+/* each minute: the sky; the whole day if it's a new one, or the place moved */
 static void update(void) {
     double lat, lon;
     char place[64];
@@ -223,28 +244,28 @@ static void update(void) {
                     : !time_synced() ? "Waiting for the clock" : NULL;
     lv_obj_set_hidden(s_note, !why);
     lv_obj_set_hidden(s_body, why);
+    time_t now = time(NULL);
     if (why) {
         lv_label_set_text(s_note, why);
+        lv_label_set_text(s_sub, "");
+        s_day_start = 0;
+        paint(now);
         return;
     }
-    time_t now = time(NULL);
     if (lat != s_lat || lon != s_lon || now >= s_day_end || now < s_day_start) {
         s_lat = lat;
         s_lon = lon;
         work_out_day(now);
     }
-    s_now = now;
     struct tm tm;
     localtime_r(&now, &tm);
     char date[48];
     strftime(date, sizeof date, "%A %e %B %Y", &tm);
-    lv_label_set_text_fmt(s_sub, "%s   \xC2\xB7   %s", place[0] ? place : "Here", date);
-
-    s_elong = astro_moon_phase(now, &s_lit);   /* the moon now: one sun and one moon position */
-    lv_label_set_text(s_phase, phase_name(s_elong));
-    lv_label_set_text_fmt(s_lit_label, "%d%% lit, %s", (int)lround(s_lit * 100), s_elong < 180 ? "waxing" : "waning");
-    lv_obj_invalidate(s_moon);
-    lv_obj_invalidate(s_chart);
+    lv_label_set_text_fmt(s_sub, "%s  \xC2\xB7  %s", place[0] ? place : "Here", date);
+    double lit;
+    double e = astro_moon_phase(now, &lit);
+    lv_label_set_text_fmt(s_phase, "%s, %d%% lit", phase_name(e), (int)lround(lit * 100));
+    paint(now);
 }
 
 static void tick_cb(lv_timer_t *t) { update(); }
@@ -269,97 +290,110 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, 
     return l;
 }
 
-/* a label in a column: as wide as it, wrapping */
-static lv_obj_t *wrapped(lv_obj_t *parent, const lv_font_t *font, uint32_t color) {
-    lv_obj_t *l = label(parent, font, color, 0, 0);
-    lv_obj_set_width(l, LV_PCT(100));
-    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_WRAP);
+/* a caption line: kept to its column and to one line (dots if too long:
+   LVGL only shortens a label of a fixed height, else it wraps over the next) */
+static lv_obj_t *line(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int32_t x, int32_t y, int32_t w) {
+    lv_obj_t *l = label(parent, font, color, x, y);
+    lv_obj_set_size(l, w, lv_font_get_line_height(font));
+    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
     return l;
 }
 
-/* a caption over a big time: "Sunrise" / "07:38" */
-static lv_obj_t *big_time(lv_obj_t *parent, const char *caption, int32_t x, int32_t y) {
-    lv_label_set_text(label(parent, &art_font_16, MINOR, x, y), caption);
-    return label(parent, &art_font_32, TEXT, x, y + 20);
+/* a time on the horizon: a small dark tab, readable on any sky */
+static lv_obj_t *tab(lv_obj_t *parent) {
+    lv_obj_t *l = label(parent, &art_font_16, PAPER_TEXT, 0, 0);
+    lv_obj_set_style_bg_color(l, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(l, LV_OPA_40, 0);
+    lv_obj_set_style_radius(l, 4, 0);
+    lv_obj_set_style_pad_hor(l, 8, 0);
+    lv_obj_set_style_pad_ver(l, 3, 0);
+    return l;
 }
 
 lv_obj_t *sun_moon_create(lv_obj_t *parent) {
     lv_obj_t *page = s_page = lv_obj_create(parent);
+    lv_obj_remove_style_all(page);
     lv_obj_set_size(page, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(page, lv_color_hex(BG), 0);
+    lv_obj_set_style_bg_color(page, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(page, 0, 0);
-    lv_obj_set_style_radius(page, 0, 0);
-    lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_set_scrollable(page, false);
 
-    lv_label_set_text(label(page, &art_font_24, TEXT, 90, 12), "Sun and Moon");   /* right of the menu button */
-    s_sub = label(page, &art_font_16, MINOR, 91, 44);
+    /* the picture: an lv_image on a canvas in PSRAM (64-byte aligned for the PPA) */
+    s_px = heap_caps_aligned_alloc(64, W * H * 2, MALLOC_CAP_SPIRAM);
+    s_img = lv_image_create(page);
+    if (s_px) {
+        s_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+        s_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+        s_dsc.header.w = W;
+        s_dsc.header.h = H;
+        s_dsc.header.stride = W * 2;
+        s_dsc.data = (const uint8_t *)s_px;
+        s_dsc.data_size = W * H * 2;
+        lv_image_set_src(s_img, &s_dsc);
+    } else {
+        ESP_LOGE(TAG, "no memory for the picture");
+    }
 
-    s_note = label(page, &art_font_24, TEXT, 0, 0);
+    /* the cartouche, top right, as on a print */
+    lv_obj_t *cart = lv_obj_create(page);
+    lv_obj_remove_style_all(cart);
+    lv_obj_set_size(cart, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(cart, lv_color_hex(PAPER), 0);
+    lv_obj_set_style_bg_opa(cart, LV_OPA_90, 0);
+    lv_obj_set_style_border_color(cart, lv_color_hex(SEAL), 0);
+    lv_obj_set_style_border_width(cart, 2, 0);
+    lv_obj_set_style_radius(cart, 2, 0);
+    lv_obj_set_style_pad_hor(cart, 16, 0);
+    lv_obj_set_style_pad_ver(cart, 8, 0);
+    lv_obj_set_flex_flow(cart, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_flex_cross_place(cart, LV_FLEX_ALIGN_END, 0);
+    lv_obj_set_style_pad_row(cart, 2, 0);
+    lv_obj_set_clickable(cart, false);
+    lv_obj_align(cart, LV_ALIGN_TOP_RIGHT, -20, 18);
+    lv_obj_t *title = lv_label_create(cart);
+    lv_label_set_text(title, "Sun and Moon");
+    lv_obj_set_style_text_font(title, &art_font_24, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(INK), 0);
+    lv_obj_set_style_text_letter_space(title, 1, 0);
+    s_sub = lv_label_create(cart);
+    lv_label_set_text(s_sub, "");
+    lv_obj_set_style_text_font(s_sub, &art_font_16, 0);
+    lv_obj_set_style_text_color(s_sub, lv_color_hex(0x5A4E44), 0);
+
+    s_note = label(page, &art_font_24, PAPER_TEXT, 0, 0);
     lv_label_set_long_mode(s_note, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_width(s_note, 760);
     lv_obj_set_style_text_align(s_note, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(s_note, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(s_note, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_note, LV_OPA_40, 0);
+    lv_obj_set_style_radius(s_note, 8, 0);
+    lv_obj_set_style_pad_all(s_note, 16, 0);
+    lv_obj_align(s_note, LV_ALIGN_CENTER, 0, -40);
 
-    s_body = lv_obj_create(page);   /* all of the rest, hidden while there's no place or clock */
+    s_body = lv_obj_create(page);   /* the rest: hidden while there's no place or clock */
     lv_obj_remove_style_all(s_body);
     lv_obj_set_size(s_body, LV_PCT(100), LV_PCT(100));
     lv_obj_set_clickable(s_body, false);
 
-    /* the sun */
-    s_chart = lv_obj_create(s_body);
-    lv_obj_remove_style_all(s_chart);
-    lv_obj_set_size(s_chart, CHART_W, CHART_H);
-    lv_obj_set_pos(s_chart, 24, 80);
-    lv_obj_set_style_bg_color(s_chart, lv_color_hex(CARD_BG), 0);
-    lv_obj_set_style_bg_opa(s_chart, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(s_chart, 12, 0);
-    lv_obj_set_style_pad_all(s_chart, 10, 0);
-    lv_obj_add_event_cb(s_chart, chart_draw, LV_EVENT_DRAW_MAIN_END, NULL);
-    static const char *hours[] = { "06:00", "12:00", "18:00" };
-    for (int k = 0; k < 3; k++)   /* under the chart, at its quarters */
-        lv_label_set_text(label(s_body, &art_font_16, MINOR, 24 + 10 + (CHART_W - 20) * (k + 1) / 4 - 20, 80 + CHART_H + 4),
-                          hours[k]);
-    s_rise = big_time(s_body, "Sunrise", 24, 258);
-    s_noon = big_time(s_body, "Solar noon", 24 + 166, 258);
-    s_set = big_time(s_body, "Sunset", 24 + 332, 258);
-    /* the rest of the sun's: a column kept to the left half (the moon's is at 548) */
-    lv_obj_t *col = lv_obj_create(s_body);
-    lv_obj_remove_style_all(col);
-    lv_obj_set_pos(col, 24, 328);
-    lv_obj_set_size(col, 500, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(col, 4, 0);
-    lv_obj_set_clickable(col, false);
-    s_length = wrapped(col, &art_font_20, TEXT);
-    s_change = wrapped(col, &art_font_16, MINOR);
-    s_golden = wrapped(col, &art_font_20, GOLDEN);
-    lv_obj_set_style_pad_top(s_golden, 6, 0);
-    s_noon_alt = wrapped(col, &art_font_16, MINOR);
+    s_rise = tab(s_body);
+    s_noon = tab(s_body);
+    s_set = tab(s_body);
 
-    /* the moon */
-    s_moon = lv_obj_create(s_body);
-    lv_obj_remove_style_all(s_moon);
-    lv_obj_set_size(s_moon, MOON_D, MOON_D);
-    lv_obj_set_pos(s_moon, 548, 80);
-    lv_obj_add_event_cb(s_moon, moon_draw, LV_EVENT_DRAW_MAIN, NULL);
-    s_phase = label(s_body, &art_font_32, TEXT, 548 + MOON_D + 28, 96);
-    lv_label_set_long_mode(s_phase, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_set_width(s_phase, 1000 - (548 + MOON_D + 28));
-    s_lit_label = label(s_body, &art_font_24, TEXT, 548 + MOON_D + 28, 186);
-    s_moon_rs = label(s_body, &art_font_20, TEXT, 548, 278);
-    s_full = label(s_body, &art_font_20, TEXT, 548, 330);
-    s_new = label(s_body, &art_font_20, TEXT, 548, 362);
-    lv_obj_t *moon_text[] = { s_moon_rs, s_full, s_new };
-    for (int k = 0; k < 3; k++) {   /* kept to the right half */
-        lv_obj_set_width(moon_text[k], 1000 - 548);
-        lv_label_set_long_mode(moon_text[k], LV_LABEL_LONG_MODE_DOTS);
-    }
+    /* the caption, on the near hill: the sun's day left, the moon right of its small disc */
+    /* four lines a side, under the horizon's tabs (two rows from 434): a
+       headline, then three */
+    const int y0 = 500, dy = 22, lw = MOON_X - 30 - 84, rw = 940 - MOON_X - 34;
+    s_length = line(s_body, &art_font_20, PAPER_TEXT, 84, y0, lw);
+    s_change = line(s_body, &art_font_16, MINOR, 84, y0 + 4 + dy, lw);
+    s_golden = line(s_body, &art_font_16, GOLDEN, 84, y0 + 4 + 2 * dy, lw);
+    s_season = line(s_body, &art_font_16, MINOR, 84, y0 + 4 + 3 * dy, lw);
+    s_phase = line(s_body, &art_font_20, PAPER_TEXT, MOON_X + 34, y0, rw);
+    s_moon_rs = line(s_body, &art_font_16, MINOR, MOON_X + 34, y0 + 4 + dy, rw);
+    s_full = line(s_body, &art_font_16, MINOR, MOON_X + 34, y0 + 4 + 2 * dy, rw);
+    s_new = line(s_body, &art_font_16, MINOR, MOON_X + 34, y0 + 4 + 3 * dy, rw);
 
-    /* the season, across the bottom */
-    s_season = label(s_body, &art_font_24, TEXT, 24, 448);
-
+    s_job_lock = xSemaphoreCreateMutex();
+    if (s_px && s_job_lock && xTaskCreatePinnedToCore(painter, "sky", 4096, NULL, 1, &s_painter, 1) != pdPASS) s_painter = NULL;
     s_tick = lv_timer_create(tick_cb, 60 * 1000, NULL);
     lv_timer_pause(s_tick);
     lv_obj_set_hidden(page, true);

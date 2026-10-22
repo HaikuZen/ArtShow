@@ -19,7 +19,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/weather.c/.h` | the forecast: `config.json` on the card, the four providers, the fetch task: see Weather below |
 | `main/weather_page.c/.h`, `main/weather_icon.c/.h` | the weather page; its icons, drawn with LVGL shapes |
 | `main/artwork.c/.h`, `main/artwork_page.c/.h` | the artwork of the day: see Artwork below |
-| `main/sun_moon.c/.h`, `main/astro.c/.h` | the Sun and Moon page, and the astronomy under it: see Sun and Moon below |
+| `main/sun_moon.c/.h`, `main/sky_paint.c/.h`, `main/astro.c/.h` | the Sun and Moon page, its painted sky, and the astronomy under it: see Sun and Moon below |
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
 | `main/music.c/.h`, `main/music_synth.c/.h` | the Generative page's music: see Generative below |
 | `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
@@ -374,12 +374,34 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   coordinates the weather provider last gave (all four do), kept in NVS
   (`artshow`/`wxlat`, `wxlon`, `wxplace`, micro-degrees): offline after one
   fetch, without a card even.
-- `main/sun_moon.c`: the day's numbers when shown on a new day (or a new
-  place): ~0.56 s in the LVGL task (doubles in software: the P4's FPU is
-  single precision); each minute only the sun's dot and the moon's phase
-  (`astro_moon_phase`). The moon is drawn row by row: the lit part from the
-  limb to the terminator (x = (1 - 2 * lit) * half-width), right side when
-  waxing in the northern hemisphere, mirrored in the southern.
+- `main/sky_paint.c`: plain C (paint it on a computer first: a 1024x600
+  RGB565 file): the sky as it is, like a shin-hanga woodblock print.
+  Looking south (north, south of the equator), 120 degrees of azimuth
+  either side across the width (`astro_sun_pos`, `astro_moon_pos`: altitude
+  and azimuth), the horizon at two thirds. A three-colour gradient from a
+  table of the sun's altitude (night, blue hour, sunrise, golden hour,
+  day), paper grain (a 64 x 64 tile; each colour's 16 grained versions
+  packed once: no float per pixel), stars below -6 degrees, clouds (long
+  streaks, other ones each day, lit from below near sunrise and sunset),
+  the day's path of the sun dotted, the sun (glow and disc, behind the
+  hills), the moon (phase, soft seas, earthshine at night), three ridges
+  of hills (summed sines from the place; one pass a column: the frontmost
+  ridge's colour from a table, a ridge's edge blended over the hill
+  behind). ~5 ms on the computer, ~0.4 s on the board.
+- `main/sun_moon.c`: the picture full screen (an lv_image, 64-byte
+  aligned), painted in place by a task on core 1 at priority 1 each
+  minute (in the LVGL task it froze the screen ~1 s a minute; a minute's
+  change is a few pixels, so a half-painted one never shows). On it: the
+  times of sunrise, noon (and its height) and sunset in small dark tabs
+  on the horizon where they happen, a cartouche top right (the title,
+  the place, the date; a seal-red border), and a caption on the near
+  hill, four lines a side: the day's length, its change, the golden
+  hours, the next solstice or equinox; a small moon (painted, up or not)
+  with its phase, rise and set, the next full moon, the next new moon.
+  Each caption label has a fixed one-line height: LVGL's DOTS mode only
+  shortens a label of a fixed height, else it wraps over the line below. The day's numbers when shown
+  on a new day (or a new place): ~0.5 s in the LVGL task (doubles in
+  software: the P4's FPU is single precision).
 
 ## Settings
 
