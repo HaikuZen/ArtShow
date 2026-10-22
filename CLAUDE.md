@@ -23,7 +23,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
 | `main/music.c/.h`, `main/music_synth.c/.h` | the Generative page's music: see Generative below |
 | `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
-| `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page; its thumbnails. See Gallery below |
+| `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page (a salon hang); its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
 | `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page, and night mode: see Settings below |
 | `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
@@ -502,7 +502,12 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 
 ## Gallery
 
-- `main/gallery.c`: 15 thumbnails a page (5 x 3, cells made once: an object
+- `main/gallery.c`: a salon hang. A claret damask wall (one 56 x 96 tile,
+  made at boot, tiled by LVGL as the page's background image), each
+  picture in a gilt frame drawn ring by ring (a moulding's tones, lit from
+  the top left) round the thumbnail's own shape, with a drop shadow, and
+  an ivory wall label under it (title, artist, the star). 12 a page (4 x 3,
+  between the bottom corner buttons; cells made once: an object
   per picture wouldn't fit internal RAM at 2000), sorted by artist then
   title; modes All, Favourites, Artists (21 artist buttons a page, then one
   artist's pictures), Can't show (with the index's reason). A pager top

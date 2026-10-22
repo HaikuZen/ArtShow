@@ -1,7 +1,7 @@
 /* gallery.c - the page and its worker. The page asks (a request: filter,
  * artist, page), the worker queries the index and decodes the thumbnails,
  * then fills the cells under the LVGL lock, one by one. A newer request
- * stops the work on an older one. 15 cells and 21 artist buttons, made once:
+ * stops the work on an older one. 12 cells and 21 artist buttons, made once:
  * paging, not an object per picture (2000 pictures would not fit). */
 #include "gallery.h"
 #include "index.h"
@@ -20,20 +20,36 @@
 #include <stdio.h>
 #include <string.h>
 
-#define BG        0x0D1B2A
-#define CARD_BG   0x1B263B
-#define RIM       0x415A77
-#define MINOR     0x778DA9
-#define TEXT      0xE0F0FF
-#define GOLD      0xFFC93C
-#define COLS      5
+/* a salon hang: a claret damask wall, gilt frames, ivory wall labels */
+#define WALL      0x5A1A20
+#define DAMASK    0x6E262C
+#define BACKING   0x24140F   /* inside an empty frame */
+#define CREAM     0xF0E4CC
+#define DIM       0xC9A79C   /* lines under the title, on the wall */
+#define IVORY     0xF2EBDC
+#define LABEL_RIM 0xBDB198
+#define INK       0x2A2420
+#define GREYINK   0x6E665C
+#define GOLD      0xC8961E
+#define BRASS     0xB08A3E
+#define PALE      0xCFC5B0   /* a star not starred */
+#define COLS      4
 #define ROWS      3
 #define PER_PAGE  (COLS * ROWS)
 #define ART_COLS  3
 #define ART_ROWS  7
 #define ART_PAGE  (ART_COLS * ART_ROWS)
-#define CELL_W    184
-#define GRID_Y    74
+#define GRID_X    76         /* between the corner buttons */
+#define GRID_W    872
+#define GRID_Y    68
+#define CELL_W    212
+#define FW        7          /* the gilt moulding's width */
+#define HANG_H    (THUMB_H + 2 * FW)   /* a frame's room in the cell */
+#define LABEL_W   (THUMB_W + 2 * FW)
+#define LABEL_H   42
+#define CELL_H    (HANG_H + 4 + LABEL_H)
+#define TILE_W    56
+#define TILE_H    96
 
 static const char *TAG = "gallery";
 
@@ -50,7 +66,7 @@ typedef struct {
 /* the page's state: the LVGL task's */
 static lv_obj_t *s_page, *s_sub, *s_modes, *s_prev, *s_next, *s_pages, *s_grid, *s_artist_grid;
 static struct {
-    lv_obj_t *cell, *frame, *img, *note, *star, *title, *artist;
+    lv_obj_t *cell, *frame, *img, *note, *plate, *star, *title, *artist;
     char path[256];
     bool fav, bad;
     lv_image_dsc_t dsc;
@@ -95,6 +111,13 @@ static void set_pager(int total, int per) {
     lv_obj_set_hidden(s_pages, !more);
 }
 
+/* the frame round the picture's own shape (portrait ones stand), centred
+ * in the cell's room above the label */
+static void frame_fit(int k, int w, int h) {
+    lv_obj_set_size(s_cell[k].frame, w + 2 * FW, h + 2 * FW);
+    lv_obj_set_pos(s_cell[k].frame, (CELL_W - w - 2 * FW) / 2, (HANG_H - h - 2 * FW) / 2);
+}
+
 static void apply_items(const req_t *r, const index_item_t *it, int n, int total) {
     lv_obj_set_hidden(s_grid, false);
     lv_obj_set_hidden(s_artist_grid, true);
@@ -109,6 +132,7 @@ static void apply_items(const req_t *r, const index_item_t *it, int n, int total
         lv_label_set_text(s_cell[k].title, it[k].title);
         lv_label_set_text(s_cell[k].artist, it[k].artist[0] ? it[k].artist : "\xE2\x80\x94");
         lv_obj_set_hidden(s_cell[k].img, true);   /* until the worker has its thumbnail */
+        frame_fit(k, THUMB_W, THUMB_H);
         lv_obj_set_hidden(s_cell[k].star, it[k].bad);
         lv_obj_invalidate(s_cell[k].star);
         lv_label_set_text(s_cell[k].note, it[k].bad ? it[k].note : it[k].thumb ? "" : "Not shown yet");
@@ -183,6 +207,7 @@ static void worker(void *arg) {
                 };
                 lv_image_set_src(s_cell[k].img, NULL);
                 lv_image_set_src(s_cell[k].img, &s_cell[k].dsc);
+                frame_fit(k, w, h);
                 lv_obj_center(s_cell[k].img);
                 lv_obj_set_hidden(s_cell[k].img, false);
                 lv_label_set_text(s_cell[k].note, "");
@@ -201,12 +226,6 @@ static void star_draw(lv_event_t *e) {
     lv_area_t a;
     lv_obj_get_coords(o, &a);
     float cx = (a.x1 + a.x2) / 2.0f, cy = (a.y1 + a.y2) / 2.0f + 1, R = lv_area_get_width(&a) / 2.0f - 3, r = R * 0.45f;
-    lv_draw_rect_dsc_t bg;   /* a dark disc: the star shows on any picture */
-    lv_draw_rect_dsc_init(&bg);
-    bg.bg_color = lv_color_black();
-    bg.bg_opa = LV_OPA_50;
-    bg.radius = LV_RADIUS_CIRCLE;
-    lv_draw_rect(layer, &bg, &a);
     lv_point_precise_t p[11];
     for (int i = 0; i <= 10; i++) {
         float ang = (-90 + i * 36) * (float)M_PI / 180, rad = i % 2 ? r : R;
@@ -215,8 +234,8 @@ static void star_draw(lv_event_t *e) {
     }
     lv_draw_triangle_dsc_t t;
     lv_draw_triangle_dsc_init(&t);
-    t.color = lv_color_hex(s_cell[k].fav ? GOLD : MINOR);
-    t.opa = s_cell[k].fav ? LV_OPA_COVER : LV_OPA_70;
+    t.color = lv_color_hex(s_cell[k].fav ? GOLD : PALE);
+    t.opa = LV_OPA_COVER;
     for (int i = 0; i < 10; i++) {   /* a fan from the middle */
         t.p[0].x = cx;
         t.p[0].y = cy;
@@ -232,6 +251,73 @@ static void star_cb(lv_event_t *e) {
     index_set_fav(s_cell[k].path, s_cell[k].fav);
     lv_obj_invalidate(s_cell[k].star);
     if (s_mode == MODE_FAVS) request();   /* unstarred: off the list */
+}
+
+/* ---- the gilt frame: drawn, ring by ring from the outside in, each a
+ * moulding's tone, lit from the top left ---- */
+
+static void frame_draw(lv_event_t *e) {
+    static const uint32_t profile[FW] = { 0x4A3410, 0xB8913F, 0xE6C877, 0xC9A24E, 0x8E6A24, 0xD9B862, 0x2E2010 };
+    lv_obj_t *o = lv_event_get_current_target_obj(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_area_t a;
+    lv_obj_get_coords(o, &a);
+    lv_draw_rect_dsc_t d;
+    lv_draw_rect_dsc_init(&d);
+    for (int i = 0; i < FW; i++) {
+        lv_color_t c = lv_color_hex(profile[i]);
+        lv_color_t lit = lv_color_mix(lv_color_white(), c, 60), shade = lv_color_mix(lv_color_black(), c, 80);
+        lv_area_t s;
+        d.bg_color = lit;   /* top and left */
+        s = (lv_area_t){ a.x1 + i, a.y1 + i, a.x2 - i, a.y1 + i };
+        lv_draw_rect(layer, &d, &s);
+        s = (lv_area_t){ a.x1 + i, a.y1 + i + 1, a.x1 + i, a.y2 - i - 1 };
+        lv_draw_rect(layer, &d, &s);
+        d.bg_color = shade;   /* bottom and right */
+        s = (lv_area_t){ a.x1 + i + 1, a.y2 - i, a.x2 - i, a.y2 - i };
+        lv_draw_rect(layer, &d, &s);
+        s = (lv_area_t){ a.x2 - i, a.y1 + i + 1, a.x2 - i, a.y2 - i - 1 };
+        lv_draw_rect(layer, &d, &s);
+    }
+}
+
+/* the wall: one damask tile, tone on tone (an ogee lattice of two crossing
+ * waves, a rosette in each cell, a little grain), tiled by LVGL */
+static lv_image_dsc_t s_tile;
+
+static void damask_make(void) {
+    uint16_t *px = heap_caps_malloc(TILE_W * TILE_H * 2, MALLOC_CAP_SPIRAM);
+    if (!px) return;
+    lv_color_t wall = lv_color_hex(WALL), hi = lv_color_hex(DAMASK);
+    /* the cells' middles, in tile fractions (the lattice crosses at u 0.5, v 0 and 0.5) */
+    static const float mid[][2] = { { 0.5f, 0.25f }, { 0.5f, 0.75f }, { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 }, { 0, 0.5f }, { 1, 0.5f } };
+    uint32_t seed = 12345;
+    for (int y = 0; y < TILE_H; y++) {
+        for (int x = 0; x < TILE_W; x++) {
+            float u = (x + 0.5f) / TILE_W, v = (y + 0.5f) / TILE_H;
+            float wave = 0.25f * sinf(2 * (float)M_PI * v) * TILE_W;
+            float d1 = fabsf((u - 0.5f) * TILE_W - wave), d2 = fabsf((u - 0.5f) * TILE_W + wave);
+            float ink = fmaxf(0, 1.2f - fminf(d1, d2));   /* the lattice: ~1 px lines */
+            for (int m = 0; m < 8; m++) {
+                float dx = (u - mid[m][0]) * TILE_W, dy = (v - mid[m][1]) * TILE_H;
+                float rr = sqrtf(dx * dx + dy * dy), th = atan2f(dy, dx);
+                float edge = 7.5f * (0.55f + 0.45f * fabsf(cosf(2 * th)));   /* four petals */
+                ink = fmaxf(ink, fminf(1, edge - rr));
+                if (rr < 2.2f) ink = 0.4f;   /* an eye in the middle */
+            }
+            ink = fminf(1, ink) * 0.85f;
+            seed = seed * 1664525u + 1013904223u;
+            int grain = (int)(seed >> 29) - 4;   /* -4..3 of 255 */
+            lv_color_t c = lv_color_mix(hi, wall, (lv_opa_t)(ink * 255));
+            int r = LV_CLAMP(0, c.red + grain, 255), g = LV_CLAMP(0, c.green + grain, 255), b = LV_CLAMP(0, c.blue + grain, 255);
+            px[y * TILE_W + x] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+        }
+    }
+    s_tile = (lv_image_dsc_t){
+        .header = { .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565, .w = TILE_W, .h = TILE_H, .stride = TILE_W * 2 },
+        .data_size = TILE_W * TILE_H * 2,
+        .data = (const uint8_t *)px,
+    };
 }
 
 /* ---- the rest of the page's events ---- */
@@ -303,7 +389,9 @@ static lv_obj_t *plain(lv_obj_t *parent) {
 
 static lv_obj_t *small_button(lv_obj_t *parent, const char *sym, int d) {
     lv_obj_t *b = lv_button_create(parent);
-    lv_obj_set_style_bg_color(b, lv_color_hex(RIM), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(BRASS), 0);
+    lv_obj_set_style_text_color(b, lv_color_hex(INK), 0);
+    lv_obj_set_style_radius(b, 2, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
     lv_obj_set_size(b, 48, 40);
     lv_obj_set_ext_click_area(b, 8);
@@ -317,39 +405,51 @@ static lv_obj_t *small_button(lv_obj_t *parent, const char *sym, int d) {
 
 static void make_cell(int k) {
     lv_obj_t *c = s_cell[k].cell = plain(s_grid);
-    lv_obj_set_size(c, CELL_W, 150);
-    lv_obj_t *f = s_cell[k].frame = lv_obj_create(c);   /* the thumbnail's box */
+    lv_obj_set_size(c, CELL_W, CELL_H);
+    lv_obj_t *f = s_cell[k].frame = lv_obj_create(c);   /* the frame; the picture inside */
     lv_obj_remove_style_all(f);
-    lv_obj_set_size(f, THUMB_W + 8, THUMB_H);
-    lv_obj_set_style_bg_color(f, lv_color_hex(CARD_BG), 0);
+    lv_obj_set_style_bg_color(f, lv_color_hex(BACKING), 0);
     lv_obj_set_style_bg_opa(f, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(f, 6, 0);
-    lv_obj_set_style_clip_corner(f, true, 0);
+    lv_obj_set_style_shadow_width(f, 12, 0);   /* hung a little off the wall */
+    lv_obj_set_style_shadow_offset_x(f, 3, 0);
+    lv_obj_set_style_shadow_offset_y(f, 5, 0);
+    lv_obj_set_style_shadow_opa(f, LV_OPA_60, 0);
+    lv_obj_set_style_shadow_color(f, lv_color_black(), 0);
     lv_obj_set_scrollable(f, false);
+    frame_fit(k, THUMB_W, THUMB_H);
+    lv_obj_add_event_cb(f, frame_draw, LV_EVENT_DRAW_MAIN, NULL);
     lv_obj_add_event_cb(f, cell_cb, LV_EVENT_CLICKED, (void *)(intptr_t)k);
     s_cell[k].img = lv_image_create(f);
     lv_obj_set_clickable(s_cell[k].img, false);
     lv_obj_set_hidden(s_cell[k].img, true);
-    s_cell[k].note = label(f, &art_font_16, MINOR);
+    s_cell[k].note = label(f, &art_font_16, DIM);
     lv_label_set_long_mode(s_cell[k].note, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_width(s_cell[k].note, THUMB_W - 16);
     lv_obj_set_style_text_align(s_cell[k].note, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(s_cell[k].note);
-    lv_obj_t *s = s_cell[k].star = plain(f);
-    lv_obj_set_size(s, 32, 32);
-    lv_obj_align(s, LV_ALIGN_TOP_RIGHT, -3, 3);
+    lv_obj_t *p = s_cell[k].plate = plain(c);   /* the wall label: title, artist, the star */
+    lv_obj_set_size(p, LABEL_W, LABEL_H);
+    lv_obj_set_pos(p, (CELL_W - LABEL_W) / 2, HANG_H + 4);
+    lv_obj_set_style_bg_color(p, lv_color_hex(IVORY), 0);
+    lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(p, lv_color_hex(LABEL_RIM), 0);
+    lv_obj_set_style_border_width(p, 1, 0);
+    lv_obj_set_style_radius(p, 1, 0);
+    lv_obj_t *s = s_cell[k].star = plain(p);
+    lv_obj_set_size(s, 30, 30);
+    lv_obj_align(s, LV_ALIGN_RIGHT_MID, -3, 0);
     lv_obj_set_clickable(s, true);
     lv_obj_set_ext_click_area(s, 10);
     lv_obj_add_event_cb(s, star_draw, LV_EVENT_DRAW_MAIN, (void *)(intptr_t)k);
     lv_obj_add_event_cb(s, star_cb, LV_EVENT_CLICKED, (void *)(intptr_t)k);
-    s_cell[k].title = label(c, &art_font_16, TEXT);
+    s_cell[k].title = label(p, &art_font_16, INK);
     lv_label_set_long_mode(s_cell[k].title, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_width(s_cell[k].title, CELL_W - 4);
-    lv_obj_set_pos(s_cell[k].title, 2, THUMB_H + 4);
-    s_cell[k].artist = label(c, &art_font_16, MINOR);
+    lv_obj_set_size(s_cell[k].title, LABEL_W - 44, 22);   /* fixed heights: DOTS, not wrapping */
+    lv_obj_set_pos(s_cell[k].title, 8, 1);
+    s_cell[k].artist = label(p, &art_font_16, GREYINK);
     lv_label_set_long_mode(s_cell[k].artist, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_width(s_cell[k].artist, CELL_W - 4);
-    lv_obj_set_pos(s_cell[k].artist, 2, THUMB_H + 24);
+    lv_obj_set_size(s_cell[k].artist, LABEL_W - 44, 22);
+    lv_obj_set_pos(s_cell[k].artist, 8, 18);
     s_px[k] = heap_caps_aligned_calloc(16, THUMB_W * THUMB_H, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 }
 
@@ -359,17 +459,22 @@ lv_obj_t *gallery_create(lv_obj_t *parent) {
     assert(s_cell && s_art);   /* at boot, PSRAM has room */
     lv_obj_t *page = s_page = lv_obj_create(parent);
     lv_obj_set_size(page, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(page, lv_color_hex(BG), 0);
+    lv_obj_set_style_bg_color(page, lv_color_hex(WALL), 0);
     lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
+    damask_make();
+    if (s_tile.data) {
+        lv_obj_set_style_bg_image_src(page, &s_tile, 0);
+        lv_obj_set_style_bg_image_tiled(page, true, 0);
+    }
     lv_obj_set_style_border_width(page, 0, 0);
     lv_obj_set_style_radius(page, 0, 0);
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_set_scrollable(page, false);
 
-    lv_obj_t *head = label(page, &art_font_24, TEXT);   /* right of the menu button */
+    lv_obj_t *head = label(page, &art_font_24, CREAM);   /* right of the menu button */
     lv_label_set_text(head, "Gallery");
     lv_obj_set_pos(head, 90, 12);
-    s_sub = label(page, &art_font_16, MINOR);
+    s_sub = label(page, &art_font_16, DIM);
     lv_label_set_long_mode(s_sub, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_width(s_sub, 900);
     lv_obj_set_pos(s_sub, 91, 44);
@@ -386,12 +491,19 @@ lv_obj_t *gallery_create(lv_obj_t *parent) {
     lv_obj_set_style_bg_opa(s_modes, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_modes, 0, 0);
     lv_obj_set_style_pad_all(s_modes, 0, 0);
+    lv_obj_set_style_bg_color(s_modes, lv_color_hex(0x3E1015), LV_PART_ITEMS);   /* darker claret; gilt when picked */
+    lv_obj_set_style_text_color(s_modes, lv_color_hex(CREAM), LV_PART_ITEMS);
+    lv_obj_set_style_radius(s_modes, 2, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(s_modes, 0, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(s_modes, 0, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(s_modes, lv_color_hex(BRASS), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(s_modes, lv_color_hex(INK), LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_add_event_cb(s_modes, mode_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* the pager, top right */
     s_prev = small_button(page, LV_SYMBOL_LEFT, -1);
     lv_obj_set_pos(s_prev, 760, 4);
-    s_pages = label(page, &art_font_20, TEXT);
+    s_pages = label(page, &art_font_20, CREAM);
     lv_obj_set_width(s_pages, 90);
     lv_obj_set_style_text_align(s_pages, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_pos(s_pages, 812, 13);
@@ -400,26 +512,32 @@ lv_obj_t *gallery_create(lv_obj_t *parent) {
 
     /* the pictures */
     s_grid = plain(page);
-    lv_obj_set_pos(s_grid, 24, GRID_Y);
-    lv_obj_set_size(s_grid, 976, 3 * 150 + 2 * 6);
+    lv_obj_set_pos(s_grid, GRID_X, GRID_Y);
+    lv_obj_set_size(s_grid, GRID_W, ROWS * CELL_H + (ROWS - 1) * 6);
     lv_obj_set_flex_flow(s_grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_column(s_grid, (976 - COLS * CELL_W) / (COLS - 1), 0);
+    lv_obj_set_style_pad_column(s_grid, (GRID_W - COLS * CELL_W) / (COLS - 1), 0);
     lv_obj_set_style_pad_row(s_grid, 6, 0);
     for (int k = 0; k < PER_PAGE; k++) make_cell(k);
 
     /* the artists */
     s_artist_grid = plain(page);
-    lv_obj_set_pos(s_artist_grid, 24, GRID_Y);
-    lv_obj_set_size(s_artist_grid, 976, ART_ROWS * 56 + (ART_ROWS - 1) * 8);
+    lv_obj_set_pos(s_artist_grid, GRID_X, GRID_Y + 6);
+    lv_obj_set_size(s_artist_grid, GRID_W, ART_ROWS * 56 + (ART_ROWS - 1) * 8);
     lv_obj_set_flex_flow(s_artist_grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_column(s_artist_grid, 14, 0);
     lv_obj_set_style_pad_row(s_artist_grid, 8, 0);
     for (int k = 0; k < ART_PAGE; k++) {
         lv_obj_t *b = s_art[k].btn = lv_button_create(s_artist_grid);
-        lv_obj_set_size(b, (976 - 2 * 14) / ART_COLS, 56);
-        lv_obj_set_style_bg_color(b, lv_color_hex(CARD_BG), 0);
-        lv_obj_set_style_shadow_width(b, 0, 0);
-        s_art[k].label = label(b, &art_font_20, TEXT);
+        lv_obj_set_size(b, (GRID_W - 2 * 14) / ART_COLS, 56);   /* an ivory wall label each */
+        lv_obj_set_style_bg_color(b, lv_color_hex(IVORY), 0);
+        lv_obj_set_style_border_color(b, lv_color_hex(LABEL_RIM), 0);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_radius(b, 1, 0);
+        lv_obj_set_style_shadow_width(b, 8, 0);
+        lv_obj_set_style_shadow_offset_y(b, 3, 0);
+        lv_obj_set_style_shadow_opa(b, LV_OPA_40, 0);
+        lv_obj_set_style_shadow_color(b, lv_color_black(), 0);
+        s_art[k].label = label(b, &art_font_20, INK);
         lv_label_set_long_mode(s_art[k].label, LV_LABEL_LONG_MODE_DOTS);
         lv_obj_set_width(s_art[k].label, LV_PCT(100));
         lv_obj_center(s_art[k].label);
