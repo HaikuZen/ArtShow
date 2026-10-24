@@ -26,7 +26,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page (a salon hang); its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
 | `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page (a blueprint), and night mode: see Settings below |
-| `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
+| `main/now_showing.c/.h`, `main/glow.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it, on a glow of its colours; the slideshow's wall label: see Now Showing below |
 | `main/diffuse.c/.h`, `main/diffuse_page.c/.h` | the drop left of "?": diffusion effects on the picture on show. See Diffuse below |
 | `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file; redirects followed; a connection kept for a run of calls to one server), JSON path helpers, cJSON in PSRAM |
 | `main/fonts/` | Montserrat 16/20/24/32 with Latin-1, Latin Extended-A and typographic punctuation (`art_font_*`): the museum's names. LVGL's built-in fonts are ASCII only |
@@ -355,6 +355,13 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   box-filtered to 480x281 after `transition_finish()`), and the slideshow is
   paused under it. Title and artist come from the file name, "Artist -
   Title.jpg" (DailyArt's: Italian titles, ':' written '_').
+- The page, a nocturne: its ground is the picture itself, `glow.c` (plain
+  C, -O2): averaged to a 16 x 9 grid, stretched back up with a smoothstep
+  between cells, darkened to 100/256, a vignette, a 4 x 4 ordered dither
+  (RGB565 bands otherwise); 1024 x 600 in ~0.23 s in the LVGL task, once a
+  picture (kept by path), into a 64-byte aligned PSRAM canvas (1.2 MB). On
+  it the picture sharp with a light keyline and a 24 px shadow (40 px took
+  ~7 KB more internal RAM while drawing), the text in warm cream.
 - The lookup, in its own task: a search on `CONFIG_ARTSHOW_WIKI_LANG`'s
   Wikipedia (menuconfig > ArtShow now showing; "it") for "title artist"; the
   top hit counts if its short description says painting (dipinto, xilografia,

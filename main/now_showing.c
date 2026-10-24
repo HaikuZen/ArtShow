@@ -4,6 +4,9 @@
  * Wikipedia (one search: the rate-limited kind of call); failing that, the
  * artist's page there, then on English Wikipedia (page summaries by title:
  * cached, generously limited). The last few answers are kept.
+ * A nocturne: the page's ground is the picture itself, its colours as a
+ * soft dark glow with a vignette (glow.c, made once a picture), the picture
+ * sharp on it with a deep shadow, the text in warm cream.
  * Also the slideshow's wall label: a museum's cartel, cream card, the artist
  * and the title, faded in after each change and out a while later. */
 #include "now_showing.h"
@@ -12,10 +15,12 @@
 #include "net.h"
 #include "wifi.h"
 #include "settings.h"
+#include "glow.h"
 #include "fonts/art_fonts.h"
 #include "esp_heap_caps.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -23,10 +28,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#define BG       0x0D1B2A
-#define RIM      0x415A77
-#define MINOR    0x778DA9
-#define TEXT     0xE0F0FF
+#define BG       0x141210   /* under the glow, until there's one */
+#define RIM      0xFFFFFF
+#define MINOR    0xCFC6B8
+#define TEXT     0xF3EEE4
+#define GLOW_LVL 100        /* the glow's brightness, of 256: dark enough for text */
 #define WARN     0xFF6B35
 #define THUMB_W  480       /* the picture, small: the screen's shape */
 #define THUMB_H  281
@@ -53,6 +59,10 @@ static lv_obj_t *s_page, *s_btn, *s_btn_label, *s_sub, *s_img, *s_folder, *s_inf
 static lv_image_dsc_t s_dsc;
 static uint16_t *s_thumb;
 static char s_path[PATH_LEN];   /* the picture on the page */
+static lv_obj_t *s_glow_img;
+static lv_image_dsc_t s_glow_dsc;
+static uint16_t *s_glow;        /* the ground: SCREEN_W x SCREEN_H, PSRAM, 64-byte aligned (the PPA) */
+static char s_glow_path[PATH_LEN];
 
 /* the wall label */
 #define CAP_MAX_W  540      /* the text's widest */
@@ -292,6 +302,14 @@ static void set_open(bool on) {
         lv_image_set_src(s_img, &s_dsc);
         lv_obj_invalidate(s_img);
     }
+    if (src && s_glow && strcmp(path, s_glow_path)) {   /* the ground: once a picture */
+        int64_t t0 = esp_timer_get_time();
+        glow_make(src, SCREEN_W, SCREEN_H, s_glow, SCREEN_W, SCREEN_H, GLOW_LVL);
+        snprintf(s_glow_path, sizeof s_glow_path, "%s", path);
+        lv_obj_invalidate(s_glow_img);
+        ESP_LOGD(TAG, "glow in %d ms", (int)((esp_timer_get_time() - t0) / 1000));
+    }
+    lv_obj_set_hidden(s_glow_img, !s_glow_path[0]);
     if (!strcmp(path, s_path)) return;   /* the same one: its text is there */
 
     snprintf(s_path, sizeof s_path, "%s", path);
@@ -410,8 +428,23 @@ void now_showing_create(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_set_scrollable(page, false);
 
+    s_glow = heap_caps_aligned_calloc(64, 1, SCREEN_W * SCREEN_H * 2, MALLOC_CAP_SPIRAM);
+    s_glow_img = lv_image_create(page);   /* first: under everything */
+    if (s_glow) {
+        s_glow_dsc = (lv_image_dsc_t){
+            .header = { .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565, .w = SCREEN_W, .h = SCREEN_H,
+                        .stride = SCREEN_W * 2 },
+            .data_size = SCREEN_W * SCREEN_H * 2,
+            .data = (const uint8_t *)s_glow,
+        };
+        lv_image_set_src(s_glow_img, &s_glow_dsc);
+    }
+    lv_obj_set_pos(s_glow_img, 0, 0);
+    lv_obj_set_hidden(s_glow_img, true);
+
     lv_obj_t *head = label(page, &art_font_24, TEXT, false);   /* right of the menu button */
     lv_label_set_text(head, "Now Showing");
+    lv_obj_set_style_text_letter_space(head, 2, 0);
     lv_obj_set_pos(head, 90, 12);
     s_sub = label(page, &art_font_16, MINOR, false);
     lv_label_set_long_mode(s_sub, LV_LABEL_LONG_MODE_DOTS);
@@ -428,12 +461,18 @@ void now_showing_create(lv_obj_t *parent) {
     };
     s_img = lv_image_create(page);
     lv_obj_set_pos(s_img, 24, 80);
-    lv_obj_set_style_outline_width(s_img, 1, 0);
+    lv_obj_set_style_outline_width(s_img, 1, 0);   /* a faint light keyline, a deep shadow */
     lv_obj_set_style_outline_color(s_img, lv_color_hex(RIM), 0);
+    lv_obj_set_style_outline_opa(s_img, LV_OPA_40, 0);
+    lv_obj_set_style_outline_pad(s_img, 6, 0);
+    lv_obj_set_style_shadow_width(s_img, 24, 0);   /* 40 took ~7 KB more internal RAM to draw */
+    lv_obj_set_style_shadow_offset_y(s_img, 8, 0);
+    lv_obj_set_style_shadow_color(s_img, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(s_img, LV_OPA_70, 0);
     s_folder = label(page, &art_font_16, MINOR, false);
     lv_label_set_long_mode(s_folder, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_width(s_folder, THUMB_W);
-    lv_obj_set_pos(s_folder, 24, 80 + THUMB_H + 12);
+    lv_obj_set_pos(s_folder, 24, 80 + THUMB_H + 18);
 
     /* its card: scrolls when the text is long */
     s_info = lv_obj_create(page);
@@ -445,7 +484,13 @@ void now_showing_create(lv_obj_t *parent) {
     lv_obj_set_style_pad_right(s_info, 8, 0);
     lv_obj_set_scroll_dir(s_info, LV_DIR_VER);
     s_title = label(s_info, &art_font_32, TEXT, true);
-    s_artist = label(s_info, &art_font_24, TEXT, true);
+    s_artist = label(s_info, &art_font_24, MINOR, true);
+    lv_obj_t *rule = lv_obj_create(s_info);   /* a short cream rule under the artist */
+    lv_obj_remove_style_all(rule);
+    lv_obj_set_size(rule, 56, 2);
+    lv_obj_set_style_bg_color(rule, lv_color_hex(TEXT), 0);
+    lv_obj_set_style_bg_opa(rule, LV_OPA_70, 0);
+    lv_obj_set_style_margin_top(rule, 4, 0);
     s_about_of = label(s_info, &art_font_16, MINOR, true);   /* Wikipedia's text asks for credit */
     lv_obj_set_style_pad_top(s_about_of, 8, 0);
     s_about = label(s_info, &art_font_20, TEXT, true);

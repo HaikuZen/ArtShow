@@ -1,9 +1,9 @@
-idf_component_register(SRCS "slideshow.c" "main.c" "board.c" "wifi.c" "wifi_ui.c" "audio.c" "brightness_ui.c" "transition.c" "clock_page.c" "menu.c" "time_sync.c"
+idf_component_register(SRCS "glow.c" "slideshow.c" "main.c" "board.c" "wifi.c" "wifi_ui.c" "audio.c" "brightness_ui.c" "transition.c" "clock_page.c" "menu.c" "time_sync.c"
                             "weather.c" "weather_icon.c" "weather_page.c"
                             "net.c" "artwork.c" "artwork_page.c" "now_showing.c" "astro.c" "sun_moon.c"
                             "settings.c" "settings_page.c" "night.c" "index.c"
                             "thumb.c" "gallery.c" "notes.c"
-                            "gen_art.c" "generative.c" "albums.c" "album_wall.c" "music.c" "music_synth.c" "diffuse.c" "diffuse_page.c" "sky_paint.c" "sky_view.c"
+                            "gen_art.c" "generative.c" "albums.c" "album_wall.c" "music.c" "music_synth.c" "diffuse.c" "diffuse_page.c" "glow.c" "sky_paint.c" "sky_view.c"
                             "fonts/art_font_16.c" "fonts/art_font_20.c" "fonts/art_font_24.c" "fonts/art_font_32.c"
                        INCLUDE_DIRS "."
                        REQUIRES esp_lcd esp_driver_i2c esp_driver_ledc esp_driver_gpio esp_hw_support esp_wifi esp_netif esp_event nvs_flash esp_driver_i2s
@@ -13,4 +13,4 @@ idf_component_register(SRCS "slideshow.c" "main.c" "board.c" "wifi.c" "wifi_ui.c
 target_compile_definitions(${COMPONENT_LIB} PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 # pixel loops over the whole screen (the diffusion effects, the Sun and Moon
 # page's sky), 2-3 times faster than at the build's -Og (Melt was 94 s)
-set_source_files_properties(diffuse.c sky_paint.c PROPERTIES COMPILE_OPTIONS "-O2")
+set_source_files_properties(diffuse.c sky_paint.c glow.c PROPERTIES COMPILE_OPTIONS "-O2")
