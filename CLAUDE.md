@@ -570,8 +570,11 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   the attractor's limit: ~0.65 M points/s, was 0.44 M); `logf` 0.35 us, so
   the tone map is a table for counts 0..max, made once per refresh.
 - `main/generative.c`: the canvas full screen (an lv_image, 64-byte aligned
-  for the PPA), caption at the bottom. Top left: the kind (all in turn, or
-  one; `g_settings.gen_mode`). Top right: Recolour (the same seed in the
+  for the PPA). The chrome after the 1960s computer-art shows: a wall label
+  at the bottom (the palette as five paint chips, a tap recolours; the
+  caption's title, PAINTING or FINISHED, the settings, the colours' source,
+  the music), the buttons in one dark console capsule. Top left: the kind (all in turn, or
+  one; `g_settings.gen_mode`). Top right: Music, Recolour (the same seed in the
   colours of a random painting: its Gallery thumbnail, `index_random_thumb`,
   not a 4096 px decode), Hold (a finished piece stays till Next;
   `g_settings.gen_hold`), Next, Save. A task on core 1 at priority 1 paints

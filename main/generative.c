@@ -3,7 +3,11 @@
  * Next and Save top right. A task paints in 25 ms slices (giving
  * the CPU back between them) and redraws the screen 4 times a second; a
  * finished piece stays a minute and a half, then the next algorithm starts.
- * The palette: 5 colours of the picture the slideshow shows. */
+ * The palette: 5 colours of the picture the slideshow shows.
+ * The chrome, after the computer-art shows of the 1960s: a wall label at
+ * the bottom (the palette as five paint chips: a tap recolours; the
+ * title, painting or finished, the settings, the colours' source, the
+ * music) and the buttons in one dark console, top right. */
 #include "generative.h"
 #include "gen_art.h"
 #include "slideshow.h"
@@ -33,7 +37,14 @@
 
 static const char *TAG = "generative";
 
-static lv_obj_t *s_page, *s_img, *s_caption, *s_status;
+#define LABEL_W   680
+#define LABEL_H   64
+#define CHIP_W    18
+#define INK       0xF0EDE6
+#define GREY      0xA8A39A
+#define CONSOLE   LV_OPA_50   /* the dark capsules' opacity over the piece */
+
+static lv_obj_t *s_page, *s_img, *s_title, *s_state, *s_detail, *s_status, *s_chip[GEN_COLORS];
 static lv_image_dsc_t s_dsc;
 static gen_canvas_t s_c;
 static TaskHandle_t s_task;
@@ -210,9 +221,17 @@ static void start_piece(bool recolour) {
     gen_algos[s_algo].start(&s_c);
     char tune[64];   /* its music: the same kind, seed and colours */
     music_piece(s_c.seed, s_algo, s_c.pal, tune, sizeof tune);
+    /* the label: the title (the caption up to its first dot), then the rest */
+    static const char DOT[] = "   \xC2\xB7   ";
+    const char *cut = strstr(s_c.caption, DOT);
+    int tlen = cut ? (int)(cut - s_c.caption) : (int)strlen(s_c.caption);
+    const char *rest = cut ? cut + strlen(DOT) : "";
     lvgl_port_lock(0);
-    if (who[0]) lv_label_set_text_fmt(s_caption, "%s   \xC2\xB7   colours from %s   \xC2\xB7   music: %s", s_c.caption, who, tune);
-    else lv_label_set_text_fmt(s_caption, "%s   \xC2\xB7   music: %s", s_c.caption, tune);
+    lv_label_set_text_fmt(s_title, "%.*s", tlen, s_c.caption);
+    lv_label_set_text(s_state, "PAINTING");
+    lv_label_set_text_fmt(s_detail, "%s%s%s%s%smusic: %s", rest, rest[0] ? DOT : "", who[0] ? "colours from " : "", who,
+                          who[0] ? DOT : "", tune);
+    for (int k = 0; k < GEN_COLORS; k++) lv_obj_set_style_bg_color(s_chip[k], lv_color_hex(s_c.pal[k]), 0);
     lv_obj_set_hidden(s_status, true);
     lvgl_port_unlock();
     ESP_LOGI(TAG, "%s%s", s_c.caption, recolour ? " (recoloured)" : "");
@@ -256,6 +275,9 @@ static void painter(void *arg) {
         if (!done_at && gen_algos[s_algo].step(&s_c, SLICE_MS)) {
             done_at = esp_timer_get_time() / 1000;
             ESP_LOGI(TAG, "%s: finished", s_c.name);
+            lvgl_port_lock(0);
+            lv_label_set_text(s_state, "FINISHED");
+            lvgl_port_unlock();
         }
         now = esp_timer_get_time() / 1000;
         if (now - last_draw > 250 || done_at) {   /* the screen: 4 times a second at most */
@@ -311,21 +333,43 @@ void generative_shown(bool shown) {
     if (shown && s_task) xTaskNotifyGive(s_task);
 }
 
-/* like the corner buttons */
+/* a button of the console: no ground of its own, a pale icon */
 static lv_obj_t *button(lv_obj_t *parent, const char *sym, lv_event_cb_t cb) {
     lv_obj_t *b = lv_button_create(parent);
-    lv_obj_set_style_bg_color(b, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_30, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(b, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(b, LV_OPA_20, LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(b, 0, 0);
-    lv_obj_set_style_pad_all(b, 10, 0);
-    lv_obj_set_ext_click_area(b, 12);
+    lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_size(b, 48, 44);
+    lv_obj_set_ext_click_area(b, 4);
     lv_obj_t *l = lv_label_create(b);
     lv_label_set_text(l, sym);
     lv_obj_set_style_text_font(l, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(l, lv_color_hex(0x808080), 0);
-    lv_obj_set_style_text_opa(l, LV_OPA_60, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(INK), 0);
+    lv_obj_set_style_text_opa(l, LV_OPA_80, 0);
+    lv_obj_center(l);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     return b;
+}
+
+/* a dark capsule over the piece */
+static void capsule(lv_obj_t *o) {
+    lv_obj_set_style_bg_color(o, lv_color_hex(0x0C0C0C), 0);
+    lv_obj_set_style_bg_opa(o, CONSOLE, 0);
+    lv_obj_set_style_radius(o, 24, 0);
+    lv_obj_set_style_border_width(o, 1, 0);
+    lv_obj_set_style_border_color(o, lv_color_white(), 0);
+    lv_obj_set_style_border_opa(o, LV_OPA_10, 0);
+    lv_obj_set_style_shadow_width(o, 0, 0);
+}
+
+static lv_obj_t *text(lv_obj_t *parent, const lv_font_t *font, uint32_t color) {
+    lv_obj_t *l = lv_label_create(parent);
+    lv_obj_set_style_text_font(l, font, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+    lv_label_set_text(l, "");
+    return l;
 }
 
 lv_obj_t *generative_create(lv_obj_t *parent) {
@@ -353,19 +397,25 @@ lv_obj_t *generative_create(lv_obj_t *parent) {
     }
     lv_obj_set_pos(s_img, 0, 0);
 
-    lv_obj_t *save = button(page, LV_SYMBOL_SAVE, save_cb);
-    lv_obj_align(save, LV_ALIGN_TOP_RIGHT, -12, 12);
-    lv_obj_t *next = button(page, LV_SYMBOL_NEXT, next_cb);
-    lv_obj_align_to(next, save, LV_ALIGN_OUT_LEFT_MID, -12, 0);
-    lv_obj_t *hold = button(page, LV_SYMBOL_PAUSE, hold_cb);
-    lv_obj_align_to(hold, next, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+    /* the console, top right: music, recolour, hold, next, save */
+    lv_obj_t *con = lv_obj_create(page);
+    lv_obj_remove_style_all(con);
+    capsule(con);
+    lv_obj_set_size(con, LV_SIZE_CONTENT, 52);
+    lv_obj_set_style_pad_hor(con, 6, 0);
+    lv_obj_set_style_pad_column(con, 6, 0);
+    lv_obj_set_flex_flow(con, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(con, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scrollable(con, false);
+    lv_obj_align(con, LV_ALIGN_TOP_RIGHT, -12, 12);
+    lv_obj_t *music = button(con, LV_SYMBOL_VOLUME_MAX, music_cb);
+    s_music_label = lv_obj_get_child(music, 0);
+    button(con, LV_SYMBOL_TINT, recolour_cb);
+    lv_obj_t *hold = button(con, LV_SYMBOL_PAUSE, hold_cb);
     s_hold_label = lv_obj_get_child(hold, 0);
     show_hold();
-    lv_obj_t *recolour = button(page, LV_SYMBOL_TINT, recolour_cb);
-    lv_obj_align_to(recolour, hold, LV_ALIGN_OUT_LEFT_MID, -12, 0);
-    lv_obj_t *music = button(page, LV_SYMBOL_VOLUME_MAX, music_cb);
-    lv_obj_align_to(music, recolour, LV_ALIGN_OUT_LEFT_MID, -12, 0);
-    s_music_label = lv_obj_get_child(music, 0);
+    button(con, LV_SYMBOL_NEXT, next_cb);
+    button(con, LV_SYMBOL_SAVE, save_cb);
     show_music();
     music_init();
 
@@ -378,36 +428,58 @@ lv_obj_t *generative_create(lv_obj_t *parent) {
     lv_obj_set_width(dd, 210);
     lv_obj_set_pos(dd, 92, 12);   /* clear of the menu button's touch area (to x 80) */
     lv_obj_set_style_text_font(dd, &art_font_16, 0);
-    lv_obj_set_style_text_color(dd, lv_color_hex(0xE0F0FF), 0);
-    lv_obj_set_style_bg_color(dd, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(dd, LV_OPA_30, 0);
-    lv_obj_set_style_border_width(dd, 0, 0);
+    lv_obj_set_style_text_color(dd, lv_color_hex(INK), 0);
+    capsule(dd);
+    lv_obj_set_height(dd, 52);
+    lv_obj_set_style_pad_left(dd, 18, 0);
+    lv_obj_set_style_pad_ver(dd, 15, 0);
     lv_obj_t *list = lv_dropdown_get_list(dd);
     lv_obj_set_style_text_font(list, &art_font_20, 0);
-    lv_obj_set_style_bg_color(list, lv_color_hex(0x1B263B), 0);
-    lv_obj_set_style_text_color(list, lv_color_hex(0xE0F0FF), 0);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x161616), 0);
+    lv_obj_set_style_text_color(list, lv_color_hex(INK), 0);
+    lv_obj_set_style_border_color(list, lv_color_hex(0x3A3A3A), 0);
     lv_obj_add_event_cb(dd, mode_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    /* the caption: bottom, between the corner buttons */
-    s_caption = lv_label_create(page);
-    lv_obj_set_style_text_font(s_caption, &art_font_16, 0);
-    lv_obj_set_style_text_color(s_caption, lv_color_hex(0xE0F0FF), 0);
-    lv_obj_set_style_bg_color(s_caption, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_caption, LV_OPA_50, 0);
-    lv_obj_set_style_pad_hor(s_caption, 10, 0);
-    lv_obj_set_style_pad_ver(s_caption, 4, 0);
-    lv_obj_set_style_radius(s_caption, 6, 0);
-    lv_label_set_long_mode(s_caption, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_style_max_width(s_caption, 820, 0);
-    lv_label_set_text(s_caption, "");
-    lv_obj_align(s_caption, LV_ALIGN_BOTTOM_MID, 0, -20);
+    /* the wall label: bottom, between the corner buttons; the chips recolour */
+    lv_obj_t *lab = lv_obj_create(page);
+    lv_obj_remove_style_all(lab);
+    lv_obj_set_size(lab, LABEL_W, LABEL_H);
+    lv_obj_align(lab, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_set_style_bg_color(lab, lv_color_hex(0x0C0C0C), 0);
+    lv_obj_set_style_bg_opa(lab, LV_OPA_70, 0);
+    lv_obj_set_style_radius(lab, 4, 0);
+    lv_obj_set_style_clip_corner(lab, true, 0);
+    lv_obj_set_scrollable(lab, false);
+    for (int k = 0; k < GEN_COLORS; k++) {
+        lv_obj_t *c = s_chip[k] = lv_obj_create(lab);
+        lv_obj_remove_style_all(c);
+        lv_obj_set_size(c, CHIP_W, LABEL_H);
+        lv_obj_set_pos(c, k * (CHIP_W + 1), 0);
+        lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(c, lv_color_hex(DEFAULT_PAL[k]), 0);
+        lv_obj_add_event_cb(c, recolour_cb, LV_EVENT_CLICKED, NULL);
+    }
+    const int tx = GEN_COLORS * (CHIP_W + 1) + 14, tw = LABEL_W - tx - 14;
+    s_title = text(lab, &art_font_20, INK);
+    lv_label_set_long_mode(s_title, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_size(s_title, tw - 110, 24);   /* DOTS needs a height */
+    lv_obj_set_pos(s_title, tx, 8);
+    s_state = text(lab, &art_font_16, GREY);
+    lv_obj_set_style_text_letter_space(s_state, 2, 0);
+    lv_obj_set_width(s_state, 104);
+    lv_obj_set_style_text_align(s_state, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(s_state, tx + tw - 104, 11);
+    s_detail = text(lab, &art_font_16, GREY);
+    lv_label_set_long_mode(s_detail, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_size(s_detail, tw, 22);
+    lv_obj_set_pos(s_detail, tx, 36);
     s_status = lv_label_create(page);
     lv_obj_set_style_text_font(s_status, &art_font_16, 0);
     lv_obj_set_style_text_color(s_status, lv_color_hex(0xFFC93C), 0);
-    lv_obj_set_style_bg_color(s_status, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_status, LV_OPA_50, 0);
-    lv_obj_set_style_pad_all(s_status, 6, 0);
-    lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 18);
+    capsule(s_status);
+    lv_obj_set_style_pad_hor(s_status, 16, 0);
+    lv_obj_set_style_pad_ver(s_status, 8, 0);
+    lv_obj_align(s_status, LV_ALIGN_BOTTOM_MID, 0, -14 - LABEL_H - 10);   /* over the label */
     lv_obj_set_hidden(s_status, true);
 
     /* below the slideshow's priority would starve it; at 1 with a tick's
