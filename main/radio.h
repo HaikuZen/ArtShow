@@ -19,8 +19,6 @@ const char *radio_name(int k);
  * read as it plays: radio_retune() after a new station */
 void radio_play(bool on);
 void radio_retune(void);
-/* night mode's dark: silent meanwhile, whatever radio_play says */
-void radio_quiet(bool quiet);
 /* the stream, for the screen (Now Showing); false while it's off */
 typedef struct {
     char station[48];

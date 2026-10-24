@@ -172,8 +172,13 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   reset). The player is polled, not notified: a stream buffer wakes its
   tasks with their notifications. Failures retry in 2, 4 ... 60 s.
 - The level: `g_settings.radio_volume` (5-100, Settings) squared, so 30 is
-  ~ -21 dB; a fade in over 4 s, out over 0.6 s. Night mode's dark
-  silences it (`radio_quiet`) and drops the connection.
+  ~ -21 dB; a fade in over 4 s, out over 0.6 s.
+- The night switches it off (`night.c` > `radio_ui_off`: `radio_on` 0,
+  saved, as a tap would): when the night begins (night mode's, or sunset
+  to sunrise with night mode off; a boot at night too) and when night
+  mode darkens the screen. Only a tap (or Settings) turns it on again;
+  turned on at night, it plays till the screen goes dark. Left on, it
+  would stream all night (128 kbit/s: ~1.4 GB a day).
 - `esp_audio_codec` is pinned at **2.5.0**: 2.6+ is built for P4 rev >= 3
   and its CMake fails the build on rev v1.x. Only the MP3 and AAC decoders
   are registered (`esp_mp3_dec_register`, `esp_aac_dec_register`), not the

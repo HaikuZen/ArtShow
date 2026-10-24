@@ -27,7 +27,6 @@ static void paint(void) {
 static void tick(lv_timer_t *t) {
     char st[96];
     if (!radio_status(st, sizeof st)) strcpy(st, "Radio off");
-    if (!st[0]) strcpy(st, "Quiet: the night");
     if (strcmp(lv_label_get_text(s_text), st)) {
         lv_label_set_text(s_text, st);
         s_left = SHOW_MS;   /* news: a while longer */
@@ -58,6 +57,14 @@ static void click_cb(lv_event_t *e) {
 static void apply_cb(lv_timer_t *t) {
     lv_timer_pause(t);
     radio_play(s_here && g_settings.radio_on);
+}
+
+void radio_ui_off(void) {
+    if (!g_settings.radio_on) return;
+    g_settings.radio_on = 0;
+    settings_save();
+    radio_play(false);
+    paint();
 }
 
 void radio_ui_here(bool here) {

@@ -232,7 +232,7 @@ static void switch32_cb(lv_event_t *e) {
 }
 
 /* "Title ........ [switch]" for a bool setting (or, field32, an int32_t one) */
-static void switch_row32(lv_obj_t *col, const char *title, bool *field, int32_t *field32) {
+static lv_obj_t *switch_row32(lv_obj_t *col, const char *title, bool *field, int32_t *field32) {
     lv_obj_t *row = box(col, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     label(row, &art_font_20, TEXT, title);
@@ -248,9 +248,12 @@ static void switch_row32(lv_obj_t *col, const char *title, bool *field, int32_t 
     lv_obj_set_ext_click_area(sw, 12);
     if (field) lv_obj_add_event_cb(sw, switch_cb, LV_EVENT_VALUE_CHANGED, field);
     else lv_obj_add_event_cb(sw, switch32_cb, LV_EVENT_VALUE_CHANGED, field32);
+    return sw;
 }
 
 static void switch_row(lv_obj_t *col, const char *title, bool *field) { switch_row32(col, title, field, NULL); }
+
+static lv_obj_t *s_radio_sw;
 
 static int slider_value(lv_event_t *e) { return lv_slider_get_value(lv_event_get_current_target_obj(e)); }
 
@@ -455,6 +458,7 @@ void settings_page_shown(bool shown) {
     if (shown) {
         list_folders();
         show_night();
+        lv_obj_set_state(s_radio_sw, LV_STATE_CHECKED, g_settings.radio_on != 0);   /* the note button or the night may have switched it */
         about_cb(NULL);
         lv_timer_resume(s_about_timer);
     } else {
@@ -572,7 +576,7 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     note(right, "If the screen flickers when it's dim, try another speed: it changes at once.");
 
     heading(right, "RADIO");
-    switch_row32(right, "Music with the slideshow", NULL, &g_settings.radio_on);
+    s_radio_sw = switch_row32(right, "Music with the slideshow", NULL, &g_settings.radio_on);
     stations(right);
     slider_row(right, "Volume", 1, 20, g_settings.radio_volume / 5, volume_cb, &s_volume_v);
     note(right, "Internet stations, quiet ones: the slideshow's note button (top right) switches it too. "

@@ -10,7 +10,7 @@
 #include "brightness_ui.h"
 #include "slideshow.h"
 #include "music.h"
-#include "radio.h"
+#include "radio_ui.h"
 #include "lvgl.h"
 #include "esp_log.h"
 #include <math.h>
@@ -19,7 +19,7 @@
 
 static const char *TAG = "night";
 
-static bool s_dark, s_fresh = true;   /* fresh: apply the state even if unchanged */
+static bool s_dark, s_fresh = true, s_radio_night;   /* fresh: apply the state even if unchanged */
 static time_t s_day_start, s_rise, s_set;
 static double s_lat = NAN, s_lon = NAN;
 
@@ -69,7 +69,19 @@ static bool is_night(void) {
     }
 }
 
+/* the radio's night: night mode's, or sunset to sunrise when night mode is off */
+static bool radio_night(void) {
+    if (g_settings.night_mode != NIGHT_OFF) return is_night();
+    time_t rise, set, now = time(NULL);
+    return night_sun_times(&rise, &set) && (now >= set || now < rise);
+}
+
 static void check_cb(lv_timer_t *t) {
+    /* night falls (or the boot is at night): the radio off; a tap on its
+       button turns it on again, and it then plays till the screen goes dark */
+    bool rn = radio_night();
+    if (rn && !s_radio_night) radio_ui_off();
+    s_radio_night = rn;
     bool dark = is_night() && lv_display_get_inactive_time(NULL) > WAKE_MS;
     if (dark == s_dark && !s_fresh) return;
     s_dark = dark;
@@ -78,7 +90,7 @@ static void check_cb(lv_timer_t *t) {
     board_set_brightness(level);
     slideshow_sleep(dark && level == 0);   /* nobody sees it: no reading, no decoding */
     music_quiet(dark);                     /* nor hears it: the Generative page's music stops at night */
-    radio_quiet(dark);                     /* ... and the slideshow's radio */
+    if (dark) radio_ui_off();              /* ... and the radio switches off */
     ESP_LOGI(TAG, "%s: backlight %d %%", dark ? "night" : "day", level);
 }
 

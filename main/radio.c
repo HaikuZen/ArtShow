@@ -57,7 +57,7 @@ static char s_status[96];
 static radio_info_t s_info;        /* the stream's, for the screen */
 #define META_BYTES 4080                /* a title's most: 255 x 16 */
 static char *s_meta;                   /* the reader's: PSRAM */
-static volatile bool s_want, s_quiet, s_on;   /* on: wanted and not quiet */
+static volatile bool s_want, s_on;   /* on: wanted (and the tasks made) */
 static volatile bool s_reset;                 /* the reader asks the player to empty the buffer */
 static volatile int s_gen;                    /* each retune */
 
@@ -70,7 +70,7 @@ static void set_status(const char *fmt, const char *arg) {
 bool radio_status(char *buf, size_t n) {
     if (!s_lock || !s_want) return false;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    snprintf(buf, n, "%s", s_quiet ? "" : s_status);
+    snprintf(buf, n, "%s", s_status);
     xSemaphoreGive(s_lock);
     return true;
 }
@@ -409,7 +409,7 @@ static bool start(void) {
 }
 
 static void update(void) {
-    bool on = s_want && !s_quiet;
+    bool on = s_want;
     if (on && !start()) return;
     s_on = on;
     if (s_reader) xTaskNotifyGive(s_reader);   /* out of a doze; a send it's in just returns early */
@@ -417,11 +417,6 @@ static void update(void) {
 
 void radio_play(bool on) {
     s_want = on;
-    update();
-}
-
-void radio_quiet(bool quiet) {
-    s_quiet = quiet;
     update();
 }
 
