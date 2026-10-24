@@ -5,11 +5,14 @@
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <math.h>
 
 #define RATE AUDIO_RATE
 static i2s_chan_handle_t s_tx;
+static SemaphoreHandle_t s_owner;   /* held from audio_open to audio_close */
+static int s_rate = RATE;
 
 void audio_init(void) {
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
@@ -23,6 +26,7 @@ void audio_init(void) {
     };
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx, &sc));
     ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
+    s_owner = xSemaphoreCreateMutex();
 }
 
 void audio_beep(int hz, int ms) {
@@ -43,7 +47,26 @@ void audio_beep(int hz, int ms) {
     gpio_set_level(PIN_AMP_SD, 1);                 /* amps off */
 }
 
-void audio_stream(bool on) { gpio_set_level(PIN_AMP_SD, on ? 0 : 1); }   /* active low */
+void audio_open(int hz) {
+    xSemaphoreTake(s_owner, portMAX_DELAY);
+    if (hz != s_rate) {   /* the radio's 44.1 or 48 kHz, the music's 16 */
+        i2s_std_clk_config_t clk = I2S_STD_CLK_DEFAULT_CONFIG(hz);
+        i2s_channel_disable(s_tx);
+        if (i2s_channel_reconfig_std_clock(s_tx, &clk) == ESP_OK) s_rate = hz;
+        i2s_channel_enable(s_tx);
+    }
+    gpio_set_level(PIN_AMP_SD, 0);   /* amps on (active low) */
+}
+
+void audio_close(void) {
+    gpio_set_level(PIN_AMP_SD, 1);
+    xSemaphoreGive(s_owner);
+}
+
+void audio_stream(bool on) {
+    if (on) audio_open(RATE);
+    else audio_close();
+}
 
 void audio_write(const int16_t *mono, int n) {
     static int16_t buf[2 * 256];
@@ -55,4 +78,9 @@ void audio_write(const int16_t *mono, int n) {
         mono += k;
         n -= k;
     }
+}
+
+void audio_write_stereo(const int16_t *lr, int frames) {
+    size_t w;
+    i2s_channel_write(s_tx, lr, frames * 4, &w, portMAX_DELAY);
 }

@@ -22,11 +22,12 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/sun_moon.c/.h`, `main/sky_paint.c/.h`, `main/sky_view.c/.h`, `main/astro.c/.h` | the Sun and Moon page, the painted sky (shared with the Weather page), and the astronomy under it: see Sun and Moon below |
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
 | `main/music.c/.h`, `main/music_synth.c/.h` | the Generative page's music: see Generative below |
+| `main/radio.c/.h`, `main/radio_ui.c/.h` | the slideshow's radio: an internet station, quietly. See Radio below |
 | `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
 | `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page (a salon hang); its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
 | `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page (a blueprint), and night mode: see Settings below |
-| `main/now_showing.c/.h`, `main/glow.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it, on a glow of its colours; the slideshow's wall label: see Now Showing below |
+| `main/now_showing.c/.h`, `main/glow.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it, on a glow of its colours, and what the radio plays; the slideshow's wall label: see Now Showing below |
 | `main/diffuse.c/.h`, `main/diffuse_page.c/.h` | the drop left of "?": diffusion effects on the picture on show. See Diffuse below |
 | `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file; redirects followed; a connection kept for a run of calls to one server), JSON path helpers, cJSON in PSRAM |
 | `main/fonts/` | Montserrat 16/20/24/32 with Latin-1, Latin Extended-A and typographic punctuation (`art_font_*`): the museum's names. LVGL's built-in fonts are ASCII only |
@@ -136,6 +137,59 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 - `main/audio.c/.h`: plain I2S into the speaker amps (BCLK 22, WS 21, DOUT 23),
   no codec. `audio_init()` after `board_init()`, then `audio_beep(hz, ms)`.
 - The amps' enable, GPIO 30, is **active low** (10k pull-up: off by default).
+- One player at a time: `audio_open(hz)` waits for the other's
+  `audio_close()`, sets the I2S rate and turns the amps on. The Generative
+  page's music is 16 kHz mono (`audio_stream`), the radio 44.1 or 48 kHz
+  stereo (`audio_write_stereo`).
+
+## Radio
+
+- `main/radio.c`: internet radio while the slideshow is on screen (under Now
+  Showing and Diffuse too), only then. Built-in stations, quiet ones (no
+  talk, no beat, no ads), plain HTTP: SomaFM's Drone Zone and Deep Space
+  One, Ambient Sleeping Pill, Radio Swiss Classic, France Musique Baroque
+  (MP3), Radio Paradise Mellow (AAC). `config.json`'s `"radio": {
+  "stations": [ { "name": "...", "url": "..." } ] }` (up to 12) replaces
+  them. The URL is never logged (one from the card could hold a key).
+- Two tasks, made when it's first played: the reader (idle priority, stack
+  in PSRAM) pulls the stream (`net_open`: redirects followed) into a 96 KB
+  stream buffer in PSRAM (~6 s); the player (core 0, priority 5, stack in
+  PSRAM) waits for 32 KB (2 s), decodes, and writes to I2S at the stream's
+  rate, which paces it. MP3 or ADTS AAC (HE-AAC on), told apart by the
+  first frame header, not the Content-Type (`esp_http_client` keeps
+  response headers to itself). A new station or a stop: the reader drops
+  the connection and has the player empty the buffer (`s_reset`; the
+  player resets it itself: nobody may be blocked on a stream buffer being
+  reset). The player is polled, not notified: a stream buffer wakes its
+  tasks with their notifications. Failures retry in 2, 4 ... 60 s.
+- The level: `g_settings.radio_volume` (5-100, Settings) squared, so 30 is
+  ~ -21 dB; a fade in over 4 s, out over 0.6 s. Night mode's dark
+  silences it (`radio_quiet`) and drops the connection.
+- `esp_audio_codec` is pinned at **2.5.0**: 2.6+ is built for P4 rev >= 3
+  and its CMake fails the build on rev v1.x. Only the MP3 and AAC decoders
+  are registered (`esp_mp3_dec_register`, `esp_aac_dec_register`), not the
+  default set.
+- What's playing: the request asks `Icy-MetaData: 1`, and the server then
+  puts a title block in the stream every `icy-metaint` bytes (a length
+  byte x16, `StreamTitle='Artist - Title';`); the reader takes those out
+  before the decoder sees them. The response's headers come through
+  `net_open`'s event handler (`icy-metaint`, `icy-br`). Titles are UTF-8,
+  or Latin-1 from older servers (Radio Swiss Classic's), made UTF-8. All
+  six built-in stations send titles. `radio_info()`: the station, the
+  title, MP3/AAC, kbit/s, the rate, stereo or mono.
+- Now Showing's "Listening" (under the picture's folder, a cream rule down
+  its left as the wall label's): the station, the piece, the stream; a 1 s
+  timer while the page is open, a label redrawn only when its text
+  changes. With the page open and the radio on, the lowest free internal
+  RAM was 64 KB (the boot's TLS connections, the lookup, the glow).
+- `main/radio_ui.c`: a note button top right, left of the drop (cream on,
+  grey off; `g_settings.radio_on`); a tap switches it and a dark capsule
+  under it (no shadow) gives the station or the trouble for 5 s. The
+  Settings page's Radio section: on, the station, the volume.
+- Measured on the board, three stations and a hand-over to the Generative
+  page's music and back: the buffer stays full beside the slideshow's
+  9 s software decodes; the lowest free internal RAM 85-90 KB (84 KB
+  before); transitions 11-23 frames a change (16-26 without it).
 
 ## Slideshow
 

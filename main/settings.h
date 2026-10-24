@@ -25,6 +25,9 @@ typedef struct {
     bool gen_music;         /* ... its music on the speaker */
     int32_t captions;       /* the slideshow's wall label (artist and title, a while): 1 on, 0 off. Not a
                                bool: a bool here sat in the old blob's padding and read 0 */
+    int32_t radio_on;       /* the slideshow's radio: 1 on, 0 off */
+    int32_t radio_station;  /* ... radio.c's list */
+    int32_t radio_volume;   /* ... 5..100 (the level is its square: 30 is ~ -21 dB) */
 } settings_t;
 
 extern settings_t g_settings;

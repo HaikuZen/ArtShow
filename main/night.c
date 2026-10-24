@@ -10,6 +10,7 @@
 #include "brightness_ui.h"
 #include "slideshow.h"
 #include "music.h"
+#include "radio.h"
 #include "lvgl.h"
 #include "esp_log.h"
 #include <math.h>
@@ -77,6 +78,7 @@ static void check_cb(lv_timer_t *t) {
     board_set_brightness(level);
     slideshow_sleep(dark && level == 0);   /* nobody sees it: no reading, no decoding */
     music_quiet(dark);                     /* nor hears it: the Generative page's music stops at night */
+    radio_quiet(dark);                     /* ... and the slideshow's radio */
     ESP_LOGI(TAG, "%s: backlight %d %%", dark ? "night" : "day", level);
 }
 

@@ -17,6 +17,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "board.h"
+#include "radio.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -31,7 +32,7 @@
 static const int STEPS[] = { 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1800, 3600 };
 #define N_STEPS (int)(sizeof STEPS / sizeof STEPS[0])
 
-static lv_obj_t *s_interval_v, *s_fade_v, *s_from_v, *s_to_v, *s_level_v, *s_hz_v, *s_hours, *s_sun_info;
+static lv_obj_t *s_volume_v, *s_interval_v, *s_fade_v, *s_from_v, *s_to_v, *s_level_v, *s_hz_v, *s_hours, *s_sun_info;
 static lv_obj_t *s_folders, *s_about, *s_index;
 static char s_index_was[96];   /* the summary on show: a change after a scan lists the folders again */
 static lv_timer_t *s_about_timer;
@@ -386,6 +387,49 @@ static void hz_cb(lv_event_t *e) {
     if (s_built) board_set_backlight_hz(g_settings.backlight_hz);   /* at once: compare by eye */
 }
 
+/* ---- the radio ---- */
+
+static void station_cb(lv_event_t *e) {
+    g_settings.radio_station = lv_buttonmatrix_get_selected_button(lv_event_get_current_target_obj(e));
+    settings_save();
+    radio_retune();
+}
+
+static void volume_cb(lv_event_t *e) {
+    g_settings.radio_volume = slider_value(e) * 5;
+    lv_label_set_text_fmt(s_volume_v, "%d", (int)g_settings.radio_volume);
+}
+
+/* the stations, one a row, the chosen one filled */
+static void stations(lv_obj_t *col) {
+    static const char *map[2 * RADIO_MAX_STATIONS + 1];
+    int n = radio_count(), m = 0;
+    for (int k = 0; k < n; k++) {
+        if (k) map[m++] = "\n";
+        map[m++] = radio_name(k);
+    }
+    map[m] = "";
+    lv_obj_t *bm = lv_buttonmatrix_create(col);
+    lv_buttonmatrix_set_map(bm, map);
+    lv_buttonmatrix_set_button_ctrl_all(bm, LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    lv_buttonmatrix_set_one_checked(bm, true);
+    int k = g_settings.radio_station >= 0 && g_settings.radio_station < n ? g_settings.radio_station : 0;
+    lv_buttonmatrix_set_button_ctrl(bm, k, LV_BUTTONMATRIX_CTRL_CHECKED);
+    lv_obj_set_size(bm, LV_PCT(100), n * 44);
+    lv_obj_set_style_text_font(bm, &art_font_16, 0);
+    lv_obj_set_style_bg_opa(bm, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bm, 0, 0);
+    lv_obj_set_style_pad_all(bm, 0, 0);
+    lv_obj_set_style_pad_row(bm, 6, 0);
+    outline(bm, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(bm, 1, LV_PART_ITEMS);
+    lv_obj_set_style_radius(bm, 2, LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(bm, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(bm, lv_color_hex(TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(bm, lv_color_hex(BG), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(bm, station_cb, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
 /* ---- about ---- */
 
 static void about_cb(lv_timer_t *t) {
@@ -526,6 +570,13 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     while (hz > 0 && HZ[hz] > g_settings.backlight_hz) hz--;
     slider_row(right, "Backlight switching", 0, N_HZ - 1, hz, hz_cb, &s_hz_v);
     note(right, "If the screen flickers when it's dim, try another speed: it changes at once.");
+
+    heading(right, "RADIO");
+    switch_row32(right, "Music with the slideshow", NULL, &g_settings.radio_on);
+    stations(right);
+    slider_row(right, "Volume", 1, 20, g_settings.radio_volume / 5, volume_cb, &s_volume_v);
+    note(right, "Internet stations, quiet ones: the slideshow's note button (top right) switches it too. "
+                "Others in config.json on the card: \"radio\": { \"stations\": [ { \"name\": ..., \"url\": ... } ] }.");
 
     heading(right, "ABOUT");
     s_about = label(right, &art_font_16, TEXT, "");

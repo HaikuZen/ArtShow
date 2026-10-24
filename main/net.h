@@ -18,6 +18,14 @@ char *net_get(const char *url, const char *who, size_t max, int *status, size_t 
 typedef void (*net_progress_t)(size_t done, size_t total);
 size_t net_download(const char *url, const char *who, const char *path, size_t max, bool *too_big,
                     net_progress_t progress, char *err, size_t n);
+/* GET url and leave it open, the headers read (redirects followed), for
+ * esp_http_client_read: a stream. key: a request header to send (NULL:
+ * none); on_event (may be NULL) hears the response's headers
+ * (HTTP_EVENT_ON_HEADER), arg as its user_data. NULL and err if it can't
+ * connect; else *status, and the caller closes it (esp_http_client_close,
+ * _cleanup) */
+esp_http_client_handle_t net_open(const char *url, const char *who, const char *key, const char *value,
+                                  http_event_handle_cb on_event, void *arg, int *status, char *err, size_t n);
 /* GET and parse JSON (up to 256 KB); not 200: NULL, and err holds the
  * server's own message when it sent one */
 cJSON *net_get_json(const char *url, const char *who, char *err, size_t n);

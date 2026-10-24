@@ -41,6 +41,7 @@ settings_t g_settings = {
     .gen_mode = -1,
     .gen_music = true,
     .captions = 1,
+    .radio_volume = 30,
 };
 
 typedef struct {

@@ -7,6 +7,8 @@
  * A nocturne: the page's ground is the picture itself, its colours as a
  * soft dark glow with a vignette (glow.c, made once a picture), the picture
  * sharp on it with a deep shadow, the text in warm cream.
+ * Under the picture, what the radio plays (radio.c): the station, the
+ * piece (the stream's own title), the stream.
  * Also the slideshow's wall label: a museum's cartel, cream card, the artist
  * and the title, faded in after each change and out a while later. */
 #include "now_showing.h"
@@ -16,6 +18,7 @@
 #include "wifi.h"
 #include "settings.h"
 #include "glow.h"
+#include "radio.h"
 #include "fonts/art_fonts.h"
 #include "esp_heap_caps.h"
 #include "esp_lvgl_port.h"
@@ -59,6 +62,8 @@ static lv_obj_t *s_page, *s_btn, *s_btn_label, *s_sub, *s_img, *s_folder, *s_inf
 static lv_image_dsc_t s_dsc;
 static uint16_t *s_thumb;
 static char s_path[PATH_LEN];   /* the picture on the page */
+static lv_obj_t *s_listen, *s_station, *s_track, *s_stream;   /* the radio's */
+static void listen_cb(lv_timer_t *t);
 static lv_obj_t *s_glow_img;
 static lv_image_dsc_t s_glow_dsc;
 static uint16_t *s_glow;        /* the ground: SCREEN_W x SCREEN_H, PSRAM, 64-byte aligned (the PPA) */
@@ -284,6 +289,7 @@ static void set_open(bool on) {
     lv_label_set_text(s_btn_label, on ? LV_SYMBOL_CLOSE : "?");
     slideshow_pause(on);
     if (!on) return;
+    listen_cb(NULL);
     char path[PATH_LEN];
     bool have = slideshow_now(path, sizeof path);
     lv_obj_set_hidden(s_note, have);
@@ -324,6 +330,63 @@ static void set_open(bool on) {
     lv_obj_scroll_to_y(s_info, 0, LV_ANIM_OFF);
     status(NULL, false);
     if (s_q) xQueueOverwrite(s_q, path);
+}
+
+/* ---- what the radio plays ---- */
+
+static void set_text(lv_obj_t *l, const char *txt) {   /* only a change redraws */
+    if (strcmp(lv_label_get_text(l), txt)) lv_label_set_text(l, txt);
+}
+
+static void listen_cb(lv_timer_t *t) {
+    if (lv_obj_is_hidden(s_page)) return;
+    radio_info_t r;
+    bool on = radio_info(&r);
+    lv_obj_set_hidden(s_listen, !on);
+    if (!on) return;
+    set_text(s_station, r.station);
+    bool playing = !strcmp(r.status, r.station);   /* else tuning in, or the trouble */
+    set_text(s_track, playing ? (r.title[0] ? r.title : "The station gives no titles") : r.status);
+    char st[96] = "";
+    if (playing && r.codec) {
+        int n = snprintf(st, sizeof st, "%s", r.codec);
+        if (r.kbps) n += snprintf(st + n, sizeof st - n, "  \u00b7  %d kbit/s", r.kbps);
+        if (r.rate % 1000) n += snprintf(st + n, sizeof st - n, "  \u00b7  %d.%d kHz", r.rate / 1000, r.rate % 1000 / 100);
+        else if (r.rate) n += snprintf(st + n, sizeof st - n, "  \u00b7  %d kHz", r.rate / 1000);
+        if (r.channels) snprintf(st + n, sizeof st - n, "  \u00b7  %s", r.channels > 1 ? "stereo" : "mono");
+    }
+    set_text(s_stream, st);
+}
+
+/* a one-line label, cut with dots (a fixed height, or DOTS wraps) */
+static lv_obj_t *line(lv_obj_t *parent, const lv_font_t *font, uint32_t color) {
+    lv_obj_t *l = label(parent, font, color, false);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_size(l, LV_PCT(100), lv_font_get_line_height(font));
+    return l;
+}
+
+static void listen_create(lv_obj_t *page) {
+    s_listen = lv_obj_create(page);
+    lv_obj_remove_style_all(s_listen);
+    lv_obj_set_size(s_listen, THUMB_W, LV_SIZE_CONTENT);
+    lv_obj_set_pos(s_listen, 24, 80 + THUMB_H + 54);   /* under the folder: down to ~514, above the corner buttons */
+    lv_obj_set_flex_flow(s_listen, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_listen, 2, 0);
+    lv_obj_set_style_pad_left(s_listen, 14, 0);   /* a cream rule down its left, as the wall label's */
+    lv_obj_set_style_border_side(s_listen, LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_style_border_width(s_listen, 2, 0);
+    lv_obj_set_style_border_color(s_listen, lv_color_hex(TEXT), 0);
+    lv_obj_set_style_border_opa(s_listen, LV_OPA_70, 0);
+    lv_obj_set_scrollable(s_listen, false);
+    lv_obj_t *head = label(s_listen, &art_font_16, MINOR, false);
+    lv_label_set_text(head, "LISTENING");
+    lv_obj_set_style_text_letter_space(head, 3, 0);
+    s_station = line(s_listen, &art_font_20, TEXT);
+    s_track = line(s_listen, &art_font_16, TEXT);
+    s_stream = line(s_listen, &art_font_16, MINOR);
+    lv_obj_set_hidden(s_listen, true);
+    lv_timer_create(listen_cb, 1000, NULL);   /* the title changes with the piece */
 }
 
 static void button_cb(lv_event_t *e) { set_open(lv_obj_is_hidden(s_page)); }
@@ -473,6 +536,8 @@ void now_showing_create(lv_obj_t *parent) {
     lv_label_set_long_mode(s_folder, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_width(s_folder, THUMB_W);
     lv_obj_set_pos(s_folder, 24, 80 + THUMB_H + 18);
+
+    listen_create(page);
 
     /* its card: scrolls when the text is long */
     s_info = lv_obj_create(page);

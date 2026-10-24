@@ -34,9 +34,11 @@ static bool open_following(esp_http_client_handle_t h, const char *who, int *sta
     }
 }
 
-static esp_http_client_handle_t client(const char *url) {
+static esp_http_client_handle_t client_ev(const char *url, http_event_handle_cb on_event, void *arg) {
     const esp_http_client_config_t c = {
         .url = url,
+        .event_handler = on_event,
+        .user_data = arg,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 15000,
         .buffer_size = 4096,
@@ -45,6 +47,8 @@ static esp_http_client_handle_t client(const char *url) {
     };
     return esp_http_client_init(&c);
 }
+
+static esp_http_client_handle_t client(const char *url) { return client_ev(url, NULL, NULL); }
 
 /* "https://it.wikipedia.org/w/..." -> "it.wikipedia.org" */
 static void host_of(const char *url, char *host, size_t n) {
@@ -127,6 +131,19 @@ out:
 
 char *net_get(const char *url, const char *who, size_t max, int *status, size_t *len, char *err, size_t n) {
     return get(NULL, url, who, max, status, len, err, n);
+}
+
+esp_http_client_handle_t net_open(const char *url, const char *who, const char *key, const char *value,
+                                  http_event_handle_cb on_event, void *arg, int *status, char *err, size_t n) {
+    esp_http_client_handle_t h = client_ev(url, on_event, arg);
+    if (!h) {
+        snprintf(err, n, "%s: no memory", who);
+        return NULL;
+    }
+    if (key) esp_http_client_set_header(h, key, value);
+    if (open_following(h, who, status, err, n)) return h;
+    esp_http_client_cleanup(h);
+    return NULL;
 }
 
 size_t net_download(const char *url, const char *who, const char *path, size_t max, bool *too_big,

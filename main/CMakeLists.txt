@@ -3,12 +3,12 @@ idf_component_register(SRCS "glow.c" "lv_mem_psram.c" "slideshow.c" "main.c" "bo
                             "net.c" "artwork.c" "artwork_page.c" "now_showing.c" "astro.c" "sun_moon.c"
                             "settings.c" "settings_page.c" "night.c" "index.c"
                             "thumb.c" "gallery.c" "notes.c"
-                            "gen_art.c" "generative.c" "albums.c" "album_wall.c" "music.c" "music_synth.c" "diffuse.c" "diffuse_page.c" "glow.c" "sky_paint.c" "sky_view.c"
+                            "gen_art.c" "generative.c" "albums.c" "album_wall.c" "music.c" "music_synth.c" "radio.c" "radio_ui.c" "diffuse.c" "diffuse_page.c" "glow.c" "sky_paint.c" "sky_view.c"
                             "fonts/art_font_16.c" "fonts/art_font_20.c" "fonts/art_font_24.c" "fonts/art_font_32.c"
                        INCLUDE_DIRS "."
                        REQUIRES esp_lcd esp_driver_i2c esp_driver_ledc esp_driver_gpio esp_hw_support esp_wifi esp_netif esp_event nvs_flash esp_driver_i2s
                                 esp_driver_jpeg esp_driver_sdmmc sdmmc fatfs esp_timer espressif__esp_new_jpeg
-                                esp_http_client mbedtls espressif__cjson esp_app_format sqlite3)
+                                esp_http_client mbedtls espressif__cjson espressif__esp_audio_codec esp_app_format sqlite3)
 # the generated fonts include "lvgl.h" this way
 target_compile_definitions(${COMPONENT_LIB} PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 # pixel loops over the whole screen (the diffusion effects, the Sun and Moon

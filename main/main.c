@@ -29,6 +29,8 @@
 #include "nvs_flash.h"
 #include "wifi.h"
 #include "audio.h"
+#include "radio.h"
+#include "radio_ui.h"
 
 static const char *TAG = "app";
 
@@ -40,6 +42,7 @@ static void slideshow_shown(bool shown) {
     slideshow_pause(!shown);
     now_showing_slideshow(shown);
     diffuse_page_slideshow(shown);
+    radio_ui_slideshow(shown);
 }
 
 static void nvs_init(void) {
@@ -62,12 +65,14 @@ void app_main(void) {
     net_init();
     weather_config_load(card);       /* config.json on the card; the picked provider in NVS */
     if (card) albums_config();       /* ... and the Deezer user ID */
+    radio_config(card);              /* ... and the radio's stations */
     if (lvgl_port_lock(0)) {   /* every LVGL call from outside the LVGL task holds the lock */
         lv_obj_t *scr = lv_screen_active();
         slideshow_start(scr);
         now_showing_create(scr);                    /* over the slideshow: its "?" button, top right */
         slideshow_on_show(now_showing_caption);     /* ... and its wall label */
         diffuse_page_create(scr);                   /* ... and the drop left of it */
+        radio_ui_create(scr);                       /* ... and the radio's note left of that */
         lv_obj_t *gallery = gallery_create(scr);
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */
         lv_obj_t *weather = weather_page_create(scr);
