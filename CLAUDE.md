@@ -32,7 +32,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/fonts/` | Montserrat 16/20/24/32 with Latin-1, Latin Extended-A and typographic punctuation (`art_font_*`): the museum's names. LVGL's built-in fonts are ASCII only |
 | `main/slideshow.c/.h` | the microSD picture slideshow: see Slideshow below |
 | `main/transition.c/.h` | the change from one picture to the next: see Slideshow below |
-| `main/brightness_ui.c/.h` | the backlight: a button bottom left opens a slider (folds away after 5 s untouched); the level is kept in NVS (`artshow`/`bright`) |
+| `main/brightness_ui.c/.h` | the backlight: a button bottom left opens a slider (folds away after 5 s untouched); the level is kept in NVS (`artshow`/`bright`). A sunrise dimmer: a dark capsule (no shadow: over the slideshow's transitions), a drawn track from night blue to sunlight, a drawn sun for the knob (its rays grow with the level; an extra draw size of 22 px, or LVGL clips them), a hollow sun at the left end, the level in cream |
 | `main/lv_mem_psram.c` | LVGL's memory: PSRAM first (see Clock below) |
 | `main/board.c/.h` | the board: power (LDO3 for the D-PHY), I2C, PWM backlight, the EK79007 MIPI-DSI panel (1024x600), GT911 touch, LVGL through esp_lvgl_port. `board_set_brightness(0..100)`, `board_i2c_bus()` |
 | `main/board_pins.h` | every pin and panel value, proven on the bench board. Don't change them without a reason from the hardware |
