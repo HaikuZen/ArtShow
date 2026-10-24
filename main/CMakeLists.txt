@@ -1,4 +1,4 @@
-idf_component_register(SRCS "glow.c" "slideshow.c" "main.c" "board.c" "wifi.c" "wifi_ui.c" "audio.c" "brightness_ui.c" "transition.c" "clock_page.c" "menu.c" "time_sync.c"
+idf_component_register(SRCS "glow.c" "lv_mem_psram.c" "slideshow.c" "main.c" "board.c" "wifi.c" "wifi_ui.c" "audio.c" "brightness_ui.c" "transition.c" "clock_page.c" "menu.c" "time_sync.c"
                             "weather.c" "weather_icon.c" "weather_page.c"
                             "net.c" "artwork.c" "artwork_page.c" "now_showing.c" "astro.c" "sun_moon.c"
                             "settings.c" "settings_page.c" "night.c" "index.c"
@@ -14,3 +14,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 # pixel loops over the whole screen (the diffusion effects, the Sun and Moon
 # page's sky), 2-3 times faster than at the build's -Og (Melt was 94 s)
 set_source_files_properties(diffuse.c sky_paint.c glow.c PROPERTIES COMPILE_OPTIONS "-O2")
+# LVGL's malloc is ours (lv_mem_psram.c), but only LVGL calls it, and libmain
+# is linked before LVGL: pull it in by name
+target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,-u,lv_malloc_core")

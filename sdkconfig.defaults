@@ -33,8 +33,10 @@ CONFIG_LV_FONT_MONTSERRAT_32=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
 CONFIG_LV_CALENDAR_WEEK_STARTS_MONDAY=y
 # LVGL from the system heap, not a fixed 64 KB pool: the Wi-Fi panel, the
-# clock page and its calendar don't all fit in that
-CONFIG_LV_USE_CLIB_MALLOC=y
+# clock page and its calendar don't all fit in that. Its own malloc
+# (main/lv_mem_psram.c): PSRAM first. The C library's put every small
+# object and style in internal RAM, and TLS ran short of it at boot
+CONFIG_LV_USE_CUSTOM_MALLOC=y
 # the P4's PPA draws LVGL's fills and plain images (the slideshow's picture is
 # one): a full-screen image copy by the CPU is ~40 ms, too slow for transitions
 CONFIG_LV_USE_PPA=y

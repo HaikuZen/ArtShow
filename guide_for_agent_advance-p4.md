@@ -69,7 +69,7 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # LVGL 9
 CONFIG_LV_COLOR_DEPTH_16=y
-CONFIG_LV_USE_CLIB_MALLOC=y                  # the system heap, not a fixed 64 KB pool
+CONFIG_LV_USE_CUSTOM_MALLOC=y                # the system heap, PSRAM first: see 5
 CONFIG_LV_USE_PPA=y                          # the P4's 2D engine draws fills and images
 CONFIG_LV_USE_PPA_IMG=y
 CONFIG_LV_DRAW_BUF_ALIGN=64                  # the PPA wants cache-line (64 B) alignment
@@ -235,8 +235,8 @@ idf.py -p /dev/ttyUSB<n> -b 460800 flash monitor
 - PSRAM bandwidth is the limit: the panel's scan-out, LVGL's framebuffers
   and every big buffer share it. A full-screen 1.2 MB PSRAM copy is ~28 ms;
   a full-screen redraw per frame gives 7-12 fps. Redraw only what changed.
-- LVGL from the system heap: drawing a busy page takes ~125 KB of internal
-  RAM for a moment. Leave room for it (see 5).
+- LVGL from the system heap: drawing a busy page takes ~125 KB for a
+  moment. Give LVGL a PSRAM-first allocator (see 5), or leave room for it.
 - With LVGL's direct mode and two framebuffers, the off-screen buffer lags
   until the next refresh: comparing it with the picture shows differences,
   and that is normal.
@@ -294,6 +294,23 @@ Rules:
 - Keep few files open (`max_files` small), open databases only while used.
 - Static arrays in the app (`static uint16_t big[...]`) land in internal
   RAM: allocate them in PSRAM at start instead.
+- **LVGL's memory in PSRAM**: with `CONFIG_LV_USE_CLIB_MALLOC`, every object,
+  local style and draw buffer under 16 KB (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL`)
+  lands in internal RAM, and a dozen styled pages took ~35 KB: at boot free
+  internal RAM fell to 10 KB, TLS failed and an SD read lost its DMA buffer.
+  Set `CONFIG_LV_USE_CUSTOM_MALLOC=y` and supply `lv_malloc_core`,
+  `lv_realloc_core`, `lv_free_core` (plus `lv_mem_init`, `lv_mem_deinit`,
+  `lv_mem_add_pool`, `lv_mem_remove_pool`, `lv_mem_monitor_core`,
+  `lv_mem_test_core`) with `heap_caps_malloc_prefer(size, 2,
+  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)`.
+  Measured: the lowest free internal RAM went from 10 KB to 84 KB, page
+  draws and transitions the same within their spread. Only LVGL calls these,
+  and libmain links before LVGL: force the file in with
+  `target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,-u,lv_malloc_core")`.
+- **No shadows on overlays over animated content**: a shadow allocates its
+  buffers each time it's redrawn, and an open menu over a slideshow
+  transition is redrawn every frame (an SD read lost its DMA buffer once).
+  A dark outline costs nothing.
 - **Measure**: log free, largest block and minimum-ever internal RAM while
   Wi-Fi connects, TLS runs and pages draw at the same time. Aim for 40 KB+
   at the lowest; ~90 KB free when idle is comfortable.

@@ -33,6 +33,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/slideshow.c/.h` | the microSD picture slideshow: see Slideshow below |
 | `main/transition.c/.h` | the change from one picture to the next: see Slideshow below |
 | `main/brightness_ui.c/.h` | the backlight: a button bottom left opens a slider (folds away after 5 s untouched); the level is kept in NVS (`artshow`/`bright`) |
+| `main/lv_mem_psram.c` | LVGL's memory: PSRAM first (see Clock below) |
 | `main/board.c/.h` | the board: power (LDO3 for the D-PHY), I2C, PWM backlight, the EK79007 MIPI-DSI panel (1024x600), GT911 touch, LVGL through esp_lvgl_port. `board_set_brightness(0..100)`, `board_i2c_bus()` |
 | `main/board_pins.h` | every pin and panel value, proven on the bench board. Don't change them without a reason from the hardware |
 | `main/idf_component.yml` | the component dependencies. It must stay in `main/`: a manifest at the project root is silently ignored |
@@ -105,7 +106,13 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   gets an IP.
 - `main/wifi_ui.c`: the status button (bottom right: the Wi-Fi icon only, white
   when connected, dim grey when not) and the setup panel on
-  `lv_layer_top()`: scan list, password, Connect, Forget.
+  `lv_layer_top()`: scan list, password, Connect, Forget. The panel is a
+  1950s Bakelite radio in azure: the networks are stations on an azure-lit
+  dial glass in a steel bezel (the SSIDs in the art fonts: accents), each
+  with four signal bars drawn from its RSSI, the one picked under a bright
+  needle; pale knobs (Rescan, Forget, Close), an azure "Tune in", pale keys
+  on navy. It's full screen and opaque: open over the slideshow, each
+  transition frame redraws it too (6-9 frames a change instead of 16-26).
 - `main/Kconfig.projbuild`: `idf.py menuconfig` > CrowPanel Wi-Fi sets a
   fallback network. It lands in `sdkconfig`, which is gitignored. **Never put
   the SSID or password in `sdkconfig.defaults`**: that file is committed.
@@ -243,8 +250,19 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   `synchronous = FULL` (FAT, a reset board: see Index). It shares index.c's
   SQLite lock (`index_sqlite_lock`): SQLite is built for one thread, and
   the first database opened sets SQLite up (memory from PSRAM).
-- LVGL takes its memory from the system heap (`CONFIG_LV_USE_CLIB_MALLOC`), not
-  a 64 KB pool: drawing the clock page takes ~125 KB of internal RAM for a moment.
+- LVGL takes its memory from the system heap, not a 64 KB pool (drawing the
+  clock page took ~125 KB for a moment), through its own malloc,
+  `main/lv_mem_psram.c` (`CONFIG_LV_USE_CUSTOM_MALLOC`): PSRAM first,
+  internal RAM only if PSRAM is out. With the C library's malloc
+  (`CONFIG_LV_USE_CLIB_MALLOC`) every object, local style and draw buffer
+  under 16 KB went to internal RAM: after the pages' restyles, free
+  internal RAM fell to 10 KB at boot, TLS failed (`-0x008D`) and an SD read
+  lost its DMA buffer. Measured with both, the same test: the lowest free
+  internal RAM 10 KB vs 84 KB; page draws (Clock 99-453 vs 119-240 ms,
+  Settings 83-90 vs 91-96, Gallery 85-303 vs 190-211) and transitions
+  (17-24 vs 16-26 frames) the same within their spread. libmain is linked
+  before LVGL: `main/CMakeLists.txt` pulls the file in with `-u
+  lv_malloc_core`.
 
 ## Weather
 
