@@ -23,6 +23,8 @@ typedef struct {
     int32_t gen_mode;       /* the Generative page: one piece (gen_algos' index), or -1: all in turn */
     bool gen_hold;          /* ... a finished piece stays till Next */
     bool gen_music;         /* ... its music on the speaker */
+    int32_t captions;       /* the slideshow's wall label (artist and title, a while): 1 on, 0 off. Not a
+                               bool: a bool here sat in the old blob's padding and read 0 */
 } settings_t;
 
 extern settings_t g_settings;

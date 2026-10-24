@@ -65,7 +65,8 @@ static char s_jump[256];           /* the Gallery's pick, to show next ("" none)
 static volatile int s_jump_k = -1; /* ... found in the list */
 static char s_thumb_after[256];    /* the background thumbnails' place in the index, by path */
 static volatile bool s_background = true;   /* off while the Generative page paints */
-static volatile int s_cur = -1;    /* the picture on show, in s_files */
+static volatile int s_cur = -1;
+static void (*s_on_show)(void);    /* the picture on show, in s_files */
 static TaskHandle_t s_task;
 static sdmmc_card_t *s_card;
 static jpeg_decoder_handle_t s_jpeg;
@@ -614,6 +615,7 @@ static void slideshow_task(void *arg) {
         if (s_list_changed || s_jump_k >= 0) continue;   /* rescanned, or a pick: what's ready isn't it */
         show();
         int cur = s_cur = next;
+        if (s_on_show) s_on_show();
         int64_t due = esp_timer_get_time() + g_settings.interval_s * 1000000LL;
 
         /* the countdown: once the transition is done with s_next, the
@@ -682,6 +684,8 @@ void slideshow_start(lv_obj_t *parent) {
     /* 16 KB: SQLite's calls are deeper than the decoders' */
     xTaskCreatePinnedToCore(slideshow_task, "slides", 16 * 1024, NULL, tskIDLE_PRIORITY, &s_task, 1);
 }
+
+void slideshow_on_show(void (*cb)(void)) { s_on_show = cb; }
 
 bool slideshow_now(char *path, size_t n) {
     xSemaphoreTake(s_list_lock, portMAX_DELAY);

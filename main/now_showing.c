@@ -3,12 +3,15 @@
  * summary beside it. The lookup: the painting on CONFIG_ARTSHOW_WIKI_LANG's
  * Wikipedia (one search: the rate-limited kind of call); failing that, the
  * artist's page there, then on English Wikipedia (page summaries by title:
- * cached, generously limited). The last few answers are kept. */
+ * cached, generously limited). The last few answers are kept.
+ * Also the slideshow's wall label: a museum's cartel, cream card, the artist
+ * and the title, faded in after each change and out a while later. */
 #include "now_showing.h"
 #include "slideshow.h"
 #include "transition.h"
 #include "net.h"
 #include "wifi.h"
+#include "settings.h"
 #include "fonts/art_fonts.h"
 #include "esp_heap_caps.h"
 #include "esp_lvgl_port.h"
@@ -50,6 +53,15 @@ static lv_obj_t *s_page, *s_btn, *s_btn_label, *s_sub, *s_img, *s_folder, *s_inf
 static lv_image_dsc_t s_dsc;
 static uint16_t *s_thumb;
 static char s_path[PATH_LEN];   /* the picture on the page */
+
+/* the wall label */
+#define CAP_MAX_W  540      /* the text's widest */
+#define CAP_IN_MS  700
+#define CAP_HOLD   8000
+#define CAP_OUT_MS 1200
+#define CAP_AFTER  1300     /* past the change (1 s by default) */
+static lv_obj_t *s_cap, *s_cap_artist, *s_cap_title;
+static void cap_hide(void);
 
 /* ---- the file name ---- */
 
@@ -258,6 +270,7 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, 
 /* open over the slideshow, or close; the slideshow waits meanwhile */
 static void set_open(bool on) {
     lv_obj_set_hidden(s_page, !on);
+    if (on) cap_hide();
     lv_label_set_text(s_btn_label, on ? LV_SYMBOL_CLOSE : "?");
     slideshow_pause(on);
     if (!on) return;
@@ -297,15 +310,97 @@ static void set_open(bool on) {
 
 static void button_cb(lv_event_t *e) { set_open(lv_obj_is_hidden(s_page)); }
 
+/* ---- the wall label ---- */
+
+/* the label's opacity, 0..255: each part's own (an opacity on the card as a
+   whole would draw it through a layer: a buffer of its size, internal RAM) */
+static void cap_opa(void *obj, int32_t v) {
+    lv_obj_set_style_bg_opa(s_cap, (lv_opa_t)(v * 235 / 255), 0);
+    lv_obj_set_style_border_opa(s_cap, (lv_opa_t)v, 0);
+    lv_obj_set_style_shadow_opa(s_cap, (lv_opa_t)(v * 90 / 255), 0);
+    lv_obj_set_style_text_opa(s_cap_artist, (lv_opa_t)v, 0);
+    lv_obj_set_style_text_opa(s_cap_title, (lv_opa_t)v, 0);
+    lv_obj_set_hidden(s_cap, v == 0);
+}
+
+static void cap_hide(void) {
+    lv_anim_delete(s_cap, cap_opa);
+    cap_opa(s_cap, 0);
+}
+
+/* a label's width: its text's, up to the most (DOTS needs one, and a height) */
+static void fit(lv_obj_t *l, const char *txt, const lv_font_t *font) {
+    lv_point_t sz;
+    lv_text_get_size(&sz, txt, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_set_width(l, sz.x < CAP_MAX_W ? sz.x + 2 : CAP_MAX_W);
+    lv_label_set_text(l, txt);
+}
+
+void now_showing_caption(void) {
+    char path[PATH_LEN], folder[PATH_LEN], artist[PATH_LEN], title[PATH_LEN];
+    if (!slideshow_now(path, sizeof path)) return;
+    parse(path, folder, artist, title, PATH_LEN);
+    lvgl_port_lock(0);
+    cap_hide();
+    if (g_settings.captions && !lv_obj_is_hidden(s_btn) && lv_obj_is_hidden(s_page)) {
+        fit(s_cap_artist, artist[0] ? artist : title, &art_font_20);
+        lv_obj_set_hidden(s_cap_title, !artist[0]);
+        if (artist[0]) fit(s_cap_title, title, &art_font_16);
+        lv_anim_t a;   /* in, a while, out */
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, s_cap);
+        lv_anim_set_exec_cb(&a, cap_opa);
+        lv_anim_set_values(&a, 0, 255);
+        lv_anim_set_delay(&a, CAP_AFTER);
+        lv_anim_set_duration(&a, CAP_IN_MS);
+        lv_anim_set_reverse_delay(&a, CAP_HOLD);
+        lv_anim_set_reverse_duration(&a, CAP_OUT_MS);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+        lv_anim_start(&a);
+    }
+    lvgl_port_unlock();
+}
+
+static void cap_create(lv_obj_t *parent) {
+    s_cap = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_cap);
+    lv_obj_set_size(s_cap, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_align(s_cap, LV_ALIGN_BOTTOM_LEFT, 84, -16);   /* right of the brightness button */
+    lv_obj_set_style_bg_color(s_cap, lv_color_hex(0xF4F0E8), 0);
+    lv_obj_set_style_border_color(s_cap, lv_color_hex(0x2A2420), 0);   /* a dark rule down the left edge */
+    lv_obj_set_style_border_width(s_cap, 4, 0);
+    lv_obj_set_style_border_side(s_cap, LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_style_radius(s_cap, 2, 0);
+    lv_obj_set_style_shadow_width(s_cap, 14, 0);
+    lv_obj_set_style_shadow_offset_y(s_cap, 4, 0);
+    lv_obj_set_style_shadow_color(s_cap, lv_color_black(), 0);
+    lv_obj_set_style_pad_left(s_cap, 14, 0);
+    lv_obj_set_style_pad_right(s_cap, 16, 0);
+    lv_obj_set_style_pad_ver(s_cap, 8, 0);
+    lv_obj_set_flex_flow(s_cap, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_cap, 0, 0);
+    lv_obj_set_clickable(s_cap, false);   /* taps go on to the slideshow */
+    lv_obj_set_scrollable(s_cap, false);
+    s_cap_artist = label(s_cap, &art_font_20, 0x2A2420, false);
+    lv_label_set_long_mode(s_cap_artist, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_cap_artist, 26);
+    s_cap_title = label(s_cap, &art_font_16, 0x6E665C, false);
+    lv_label_set_long_mode(s_cap_title, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_cap_title, 22);
+    cap_opa(s_cap, 0);
+}
+
 void now_showing_slideshow(bool shown) {
     if (!shown && !lv_obj_is_hidden(s_page)) {   /* another page: this one goes with the slideshow */
         lv_obj_set_hidden(s_page, true);
         lv_label_set_text(s_btn_label, "?");
     }
     lv_obj_set_hidden(s_btn, !shown);
+    if (!shown) cap_hide();
 }
 
 void now_showing_create(lv_obj_t *parent) {
+    cap_create(parent);   /* under the page */
     lv_obj_t *page = s_page = lv_obj_create(parent);
     lv_obj_set_size(page, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(page, lv_color_hex(BG), 0);

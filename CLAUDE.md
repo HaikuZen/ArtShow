@@ -180,6 +180,14 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   framebuffers, the off-screen one lags until the next refresh (LVGL syncs it
   then): comparing it with the picture after a transition shows differences,
   and that's fine. `menuconfig` > ArtShow: the length (1000 ms), and dissolve-only.
+- The wall label (`now_showing.c`, `slideshow_on_show`): after each change,
+  a museum's cartel bottom left (right of the brightness button): a cream
+  card with a dark rule down its left edge, the artist and the title from
+  the file name, faded in 1.3 s after the change (past the transition),
+  held 8 s, faded out. The fade sets each part's opacity, not the card's
+  `opa` (that draws through a layer: a buffer the card's size in internal
+  RAM). Not clickable: taps go on to the slideshow. Off in Settings
+  (`g_settings.captions`); hidden under Now Showing and other pages.
 - The slideshow is the menu's first page: the screen itself; its "?" button
   (Now Showing) only shows on it. Another page
   covers it and `slideshow_pause()` holds the next picture back (it still
@@ -546,6 +554,9 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   it anew, which is safe because favourites live in their file.
 - Settings blobs: new fields go at the end; an older, shorter blob fills the
   start and the defaults stay in the rest.
+  **A new `bool` can land in the old struct's padding**: the size doesn't
+  change, the old blob covers it, and it reads 0 (`captions` did: it's an
+  `int32_t` now). Check that `sizeof(settings_t)` grows, or use an int32.
 
 ## Generative
 

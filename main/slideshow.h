@@ -41,3 +41,6 @@ int slideshow_count(void);   /* pictures on the card */
 /* what the slideshow shows: 1024x600 RGB565, rows of 1024 pixels; NULL before
  * it starts. Read it in the LVGL task, after transition_finish() */
 const uint16_t *slideshow_screen(void);
+/* cb runs (in the slideshow's task) each time a picture goes on show:
+   slideshow_now() names it then */
+void slideshow_on_show(void (*cb)(void));

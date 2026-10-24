@@ -13,3 +13,6 @@ void now_showing_create(lv_obj_t *parent);
 /* the menu shows the slideshow, or another page (in the LVGL task): the
  * button is only on the slideshow, and another page closes this one */
 void now_showing_slideshow(bool shown);
+/* the wall label over the slideshow: the picture just put on show's artist
+   and title, faded in and out (g_settings.captions). Any task */
+void now_showing_caption(void);

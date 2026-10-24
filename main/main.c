@@ -66,6 +66,7 @@ void app_main(void) {
         lv_obj_t *scr = lv_screen_active();
         slideshow_start(scr);
         now_showing_create(scr);                    /* over the slideshow: its "?" button, top right */
+        slideshow_on_show(now_showing_caption);     /* ... and its wall label */
         diffuse_page_create(scr);                   /* ... and the drop left of it */
         lv_obj_t *gallery = gallery_create(scr);
         lv_obj_t *clock = clock_page_create(scr);   /* the pages, then the corner buttons over them */

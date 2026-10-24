@@ -224,8 +224,14 @@ static void switch_cb(lv_event_t *e) {
     settings_save();
 }
 
-/* "Title ........ [switch]" for a bool setting */
-static void switch_row(lv_obj_t *col, const char *title, bool *field) {
+static void switch32_cb(lv_event_t *e) {
+    int32_t *field = lv_event_get_user_data(e);
+    *field = lv_obj_has_state(lv_event_get_current_target_obj(e), LV_STATE_CHECKED);
+    settings_save();
+}
+
+/* "Title ........ [switch]" for a bool setting (or, field32, an int32_t one) */
+static void switch_row32(lv_obj_t *col, const char *title, bool *field, int32_t *field32) {
     lv_obj_t *row = box(col, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     label(row, &art_font_20, TEXT, title);
@@ -237,10 +243,13 @@ static void switch_row(lv_obj_t *col, const char *title, bool *field) {
     lv_obj_set_style_bg_opa(sw, LV_OPA_40, LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_bg_color(sw, lv_color_hex(TEXT), LV_PART_KNOB);
     lv_obj_set_style_shadow_width(sw, 0, LV_PART_KNOB);
-    lv_obj_set_state(sw, LV_STATE_CHECKED, *field);
+    lv_obj_set_state(sw, LV_STATE_CHECKED, field ? *field : *field32 != 0);
     lv_obj_set_ext_click_area(sw, 12);
-    lv_obj_add_event_cb(sw, switch_cb, LV_EVENT_VALUE_CHANGED, field);
+    if (field) lv_obj_add_event_cb(sw, switch_cb, LV_EVENT_VALUE_CHANGED, field);
+    else lv_obj_add_event_cb(sw, switch32_cb, LV_EVENT_VALUE_CHANGED, field32);
 }
+
+static void switch_row(lv_obj_t *col, const char *title, bool *field) { switch_row32(col, title, field, NULL); }
 
 static int slider_value(lv_event_t *e) { return lv_slider_get_value(lv_event_get_current_target_obj(e)); }
 
@@ -463,6 +472,7 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     switch_row(left, "Shuffle (else by name)", &g_settings.shuffle);
     switch_row(left, "Fill the screen (crop)", &g_settings.fill);
     switch_row(left, "Only favourites (the Gallery's stars)", &g_settings.favourites_only);
+    switch_row32(left, "Captions (artist and title, a while)", NULL, &g_settings.captions);
     heading(left, "FOLDERS");
     s_folders = box(left, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_folders, 10, 0);
