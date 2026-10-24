@@ -1,7 +1,8 @@
 /* radio_ui.c - the slideshow's radio button, top right left of the drop:
  * a note, cream while the radio is on, grey when off. A tap switches it
  * (kept in g_settings.radio_on); a dark capsule under it says the station,
- * or what's wrong, for a few seconds. */
+ * or what's wrong, for a few seconds. The radio plays on the slideshow
+ * and the pages that say radio_ui_here(true) when shown. */
 #include "radio_ui.h"
 #include "radio.h"
 #include "settings.h"
@@ -14,6 +15,8 @@
 static lv_obj_t *s_btn, *s_icon, *s_toast, *s_text;
 static lv_timer_t *s_timer;
 static int s_left;   /* the toast's time left, ms */
+static bool s_here = true;   /* on a page with the radio (the slideshow first, at boot) */
+static lv_timer_t *s_apply;
 
 static void paint(void) {
     bool on = g_settings.radio_on;
@@ -50,6 +53,19 @@ static void click_cb(lv_event_t *e) {
     toast();
 }
 
+/* the menu hides one page, then shows the next: the radio follows once
+   both are said, so going between two of its pages doesn't drop the stream */
+static void apply_cb(lv_timer_t *t) {
+    lv_timer_pause(t);
+    radio_play(s_here && g_settings.radio_on);
+}
+
+void radio_ui_here(bool here) {
+    s_here = here;
+    lv_timer_reset(s_apply);
+    lv_timer_resume(s_apply);
+}
+
 void radio_ui_slideshow(bool shown) {
     paint();   /* the Settings page may have switched it */
     lv_obj_set_hidden(s_btn, !shown);
@@ -57,7 +73,7 @@ void radio_ui_slideshow(bool shown) {
         lv_obj_set_hidden(s_toast, true);
         lv_timer_pause(s_timer);
     }
-    radio_play(shown && g_settings.radio_on);
+    radio_ui_here(shown);
 }
 
 void radio_ui_create(lv_obj_t *parent) {
@@ -98,5 +114,7 @@ void radio_ui_create(lv_obj_t *parent) {
     lv_obj_set_hidden(s_toast, true);
     s_timer = lv_timer_create(tick, 500, NULL);
     lv_timer_pause(s_timer);
+    s_apply = lv_timer_create(apply_cb, 20, NULL);
+    lv_timer_pause(s_apply);
     radio_play(g_settings.radio_on);   /* the slideshow is the first page: the menu says nothing at boot */
 }

@@ -7,8 +7,8 @@
  * A nocturne: the page's ground is the picture itself, its colours as a
  * soft dark glow with a vignette (glow.c, made once a picture), the picture
  * sharp on it with a deep shadow, the text in warm cream.
- * Under the picture, what the radio plays (radio.c): the station, the
- * piece (the stream's own title), the stream.
+ * Under the picture, what the radio plays (radio.c), as a record sleeve:
+ * a small drawn disc turning, the station, the piece, the stream.
  * Also the slideshow's wall label: a museum's cartel, cream card, the artist
  * and the title, faded in after each change and out a while later. */
 #include "now_showing.h"
@@ -62,7 +62,8 @@ static lv_obj_t *s_page, *s_btn, *s_btn_label, *s_sub, *s_img, *s_folder, *s_inf
 static lv_image_dsc_t s_dsc;
 static uint16_t *s_thumb;
 static char s_path[PATH_LEN];   /* the picture on the page */
-static lv_obj_t *s_listen, *s_station, *s_track, *s_stream;   /* the radio's */
+static lv_obj_t *s_listen, *s_station, *s_track, *s_by, *s_stream;   /* the radio's */
+static lv_color_t s_tint;   /* the picture's average: the record's label */
 static void listen_cb(lv_timer_t *t);
 static lv_obj_t *s_glow_img;
 static lv_image_dsc_t s_glow_dsc;
@@ -253,6 +254,7 @@ static void lookup_task(void *arg) {
 
 /* the screen's picture, box-filtered down into the thumbnail */
 static void make_thumb(const uint16_t *src) {
+    uint32_t sr = 0, sg = 0, sb = 0;
     for (int y = 0; y < THUMB_H; y++) {
         int y0 = y * SCREEN_H / THUMB_H, y1 = (y + 1) * SCREEN_H / THUMB_H;
         for (int x = 0; x < THUMB_W; x++) {
@@ -266,8 +268,15 @@ static void make_thumb(const uint16_t *src) {
                     b += p & 0x1f;
                 }
             s_thumb[y * THUMB_W + x] = (uint16_t)((r / n) << 11 | (g / n) << 5 | b / n);
+            sr += r / n;
+            sg += g / n;
+            sb += b / n;
         }
     }
+    /* the record's label: the picture's average, a little lighter */
+    uint32_t n = THUMB_W * THUMB_H;
+    lv_color_t avg = lv_color_make(sr / n * 255 / 31, sg / n * 255 / 63, sb / n * 255 / 31);
+    s_tint = lv_color_mix(lv_color_hex(TEXT), avg, 50);
 }
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, bool wrap) {
@@ -333,9 +342,85 @@ static void set_open(bool on) {
 }
 
 /* ---- what the radio plays ---- */
+/* A record sleeve on the nocturne: a small disc, drawn (grooves, a sheen,
+ * a label in the painting's own colour), turning while a station plays:
+ * as on a real turntable the sheen stays put and the label turns, its
+ * printed mark going round (only the label is redrawn; a frame's ~17 ms
+ * is mostly the wait for the panel's next frame, the same for the whole
+ * disc);
+ * beside it the station in spaced capitals, the piece large, its artist,
+ * and the stream small under a hairline. */
+
+#define DISC     92          /* the record's size, px */
+#define SPIN_MS  120         /* a frame of its turn: 24 degrees, ~33 rpm */
+#define LABEL_R  17
+
+static lv_obj_t *s_disc;
+static int s_angle;
+static bool s_spinning;
 
 static void set_text(lv_obj_t *l, const char *txt) {   /* only a change redraws */
     if (strcmp(lv_label_get_text(l), txt)) lv_label_set_text(l, txt);
+}
+
+static void ring(lv_layer_t *layer, int cx, int cy, int r, lv_color_t c, lv_opa_t opa, bool fill, int width) {
+    lv_draw_rect_dsc_t d;
+    lv_draw_rect_dsc_init(&d);
+    d.radius = LV_RADIUS_CIRCLE;
+    d.bg_color = c;
+    d.bg_opa = fill ? opa : LV_OPA_TRANSP;
+    d.border_color = c;
+    d.border_width = fill ? 0 : width;
+    d.border_opa = opa;
+    lv_area_t a = { cx - r, cy - r, cx + r, cy + r };
+    lv_draw_rect(layer, &d, &a);
+}
+
+static void disc_draw(lv_event_t *e) {
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_area_t a;
+    lv_obj_get_coords(s_disc, &a);
+    int cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2, R = DISC / 2 - 2;
+    lv_color_t white = lv_color_white();
+    ring(layer, cx, cy, R, lv_color_hex(0x0E0D0C), LV_OPA_COVER, true, 0);
+    ring(layer, cx, cy, R, white, LV_OPA_20, false, 1);   /* its edge, caught by the light */
+    for (int r = 21, k = 0; r < R - 2; r += 3, k++)       /* the grooves */
+        ring(layer, cx, cy, r, white, k % 2 ? 10 : 16, false, 1);
+    lv_draw_arc_dsc_t arc;                                 /* the sheen, both sides of the spindle */
+    lv_draw_arc_dsc_init(&arc);
+    arc.center.x = cx;
+    arc.center.y = cy;
+    arc.radius = R - 3;
+    arc.width = R - 22;
+    arc.color = white;
+    arc.opa = 26;
+    for (int k = 0; k < 2; k++) {   /* the light from the top left: still */
+        arc.start_angle = 200 + k * 180;
+        arc.end_angle = 230 + k * 180;
+        lv_draw_arc(layer, &arc);
+    }
+    ring(layer, cx, cy, LABEL_R, s_tint, LV_OPA_COVER, true, 0);   /* the label */
+    ring(layer, cx, cy, 13, lv_color_hex(TEXT), LV_OPA_40, false, 1);
+    arc.radius = 13;   /* its printing, going round: a band of the ring, a dot */
+    arc.width = 2;
+    arc.color = lv_color_hex(TEXT);
+    arc.opa = LV_OPA_90;
+    arc.start_angle = s_angle;
+    arc.end_angle = (s_angle + 70) % 360;
+    lv_draw_arc(layer, &arc);
+    int dx = (int)(8 * lv_trigo_cos(s_angle + 215) / LV_TRIGO_SIN_MAX), dy = (int)(8 * lv_trigo_sin(s_angle + 215) / LV_TRIGO_SIN_MAX);
+    ring(layer, cx + dx, cy + dy, 2, lv_color_hex(TEXT), LV_OPA_70, true, 0);
+    ring(layer, cx, cy, 2, lv_color_hex(0x0E0D0C), LV_OPA_COVER, true, 0);   /* the spindle's hole */
+}
+
+static void spin_cb(lv_timer_t *t) {
+    if (!s_spinning || lv_obj_is_hidden(s_page) || lv_obj_is_hidden(s_listen)) return;
+    s_angle = (s_angle + 24) % 360;
+    lv_area_t a;   /* the label alone */
+    lv_obj_get_coords(s_disc, &a);
+    int cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2;
+    a = (lv_area_t){ cx - LABEL_R, cy - LABEL_R, cx + LABEL_R, cy + LABEL_R };
+    lv_obj_invalidate_area(s_disc, &a);
 }
 
 static void listen_cb(lv_timer_t *t) {
@@ -344,18 +429,28 @@ static void listen_cb(lv_timer_t *t) {
     bool on = radio_info(&r);
     lv_obj_set_hidden(s_listen, !on);
     if (!on) return;
-    set_text(s_station, r.station);
+    char caps[sizeof r.station];   /* spaced capitals (ASCII ones: accents stay) */
+    for (size_t k = 0; k < sizeof caps; k++) caps[k] = r.station[k] >= 'a' && r.station[k] <= 'z' ? r.station[k] - 32 : r.station[k];
+    set_text(s_station, caps);
     bool playing = !strcmp(r.status, r.station);   /* else tuning in, or the trouble */
-    set_text(s_track, playing ? (r.title[0] ? r.title : "The station gives no titles") : r.status);
+    s_spinning = playing;
+    /* "Artist - Title": the title large, the artist under it */
+    const char *dash = playing ? strstr(r.title, " - ") : NULL;
+    char artist[sizeof r.title] = "";
+    if (dash) snprintf(artist, sizeof artist, "%.*s", (int)(dash - r.title), r.title);
+    set_text(s_track, !playing ? r.status : dash ? dash + 3 : r.title[0] ? r.title : "No titles from this station");
+    set_text(s_by, artist);
+    lv_obj_set_hidden(s_by, !artist[0]);
     char st[96] = "";
     if (playing && r.codec) {
         int n = snprintf(st, sizeof st, "%s", r.codec);
-        if (r.kbps) n += snprintf(st + n, sizeof st - n, "  \u00b7  %d kbit/s", r.kbps);
-        if (r.rate % 1000) n += snprintf(st + n, sizeof st - n, "  \u00b7  %d.%d kHz", r.rate / 1000, r.rate % 1000 / 100);
-        else if (r.rate) n += snprintf(st + n, sizeof st - n, "  \u00b7  %d kHz", r.rate / 1000);
-        if (r.channels) snprintf(st + n, sizeof st - n, "  \u00b7  %s", r.channels > 1 ? "stereo" : "mono");
+        if (r.kbps) n += snprintf(st + n, sizeof st - n, "  ·  %d kbit/s", r.kbps);
+        if (r.rate % 1000) n += snprintf(st + n, sizeof st - n, "  ·  %d.%d kHz", r.rate / 1000, r.rate % 1000 / 100);
+        else if (r.rate) n += snprintf(st + n, sizeof st - n, "  ·  %d kHz", r.rate / 1000);
+        if (r.channels) snprintf(st + n, sizeof st - n, "  ·  %s", r.channels > 1 ? "stereo" : "mono");
     }
     set_text(s_stream, st);
+    lv_obj_set_hidden(s_stream, !st[0]);
 }
 
 /* a one-line label, cut with dots (a fixed height, or DOTS wraps) */
@@ -367,26 +462,42 @@ static lv_obj_t *line(lv_obj_t *parent, const lv_font_t *font, uint32_t color) {
 }
 
 static void listen_create(lv_obj_t *page) {
+    s_tint = lv_color_hex(0x8A3A2A);   /* until a picture's */
     s_listen = lv_obj_create(page);
     lv_obj_remove_style_all(s_listen);
     lv_obj_set_size(s_listen, THUMB_W, LV_SIZE_CONTENT);
-    lv_obj_set_pos(s_listen, 24, 80 + THUMB_H + 54);   /* under the folder: down to ~514, above the corner buttons */
-    lv_obj_set_flex_flow(s_listen, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_listen, 2, 0);
-    lv_obj_set_style_pad_left(s_listen, 14, 0);   /* a cream rule down its left, as the wall label's */
-    lv_obj_set_style_border_side(s_listen, LV_BORDER_SIDE_LEFT, 0);
-    lv_obj_set_style_border_width(s_listen, 2, 0);
-    lv_obj_set_style_border_color(s_listen, lv_color_hex(TEXT), 0);
-    lv_obj_set_style_border_opa(s_listen, LV_OPA_70, 0);
+    lv_obj_set_pos(s_listen, 24, 80 + THUMB_H + 50);   /* under the folder: down to ~520, above the corner buttons */
+    lv_obj_set_flex_flow(s_listen, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_listen, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(s_listen, 18, 0);
     lv_obj_set_scrollable(s_listen, false);
-    lv_obj_t *head = label(s_listen, &art_font_16, MINOR, false);
-    lv_label_set_text(head, "LISTENING");
-    lv_obj_set_style_text_letter_space(head, 3, 0);
-    s_station = line(s_listen, &art_font_20, TEXT);
-    s_track = line(s_listen, &art_font_16, TEXT);
-    s_stream = line(s_listen, &art_font_16, MINOR);
+    s_disc = lv_obj_create(s_listen);
+    lv_obj_remove_style_all(s_disc);
+    lv_obj_set_size(s_disc, DISC, DISC);
+    lv_obj_add_event_cb(s_disc, disc_draw, LV_EVENT_DRAW_MAIN, NULL);
+    lv_obj_t *col = lv_obj_create(s_listen);
+    lv_obj_remove_style_all(col);
+    lv_obj_set_size(col, THUMB_W - DISC - 18, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(col, 1, 0);
+    lv_obj_set_scrollable(col, false);
+    s_station = line(col, &art_font_16, MINOR);
+    lv_obj_set_style_text_letter_space(s_station, 3, 0);
+    s_track = line(col, &art_font_20, TEXT);
+    s_by = line(col, &art_font_16, TEXT);
+    lv_obj_set_style_text_opa(s_by, LV_OPA_80, 0);
+    s_stream = line(col, &art_font_16, MINOR);   /* small, under a hairline */
+    lv_obj_set_height(s_stream, lv_font_get_line_height(&art_font_16) + 7);
+    lv_obj_set_style_pad_top(s_stream, 6, 0);
+    lv_obj_set_style_margin_top(s_stream, 3, 0);
+    lv_obj_set_style_border_side(s_stream, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_width(s_stream, 1, 0);
+    lv_obj_set_style_border_color(s_stream, lv_color_hex(TEXT), 0);
+    lv_obj_set_style_border_opa(s_stream, LV_OPA_30, 0);
+    lv_obj_set_style_text_letter_space(s_stream, 1, 0);
     lv_obj_set_hidden(s_listen, true);
     lv_timer_create(listen_cb, 1000, NULL);   /* the title changes with the piece */
+    lv_timer_create(spin_cb, SPIN_MS, NULL);
 }
 
 static void button_cb(lv_event_t *e) { set_open(lv_obj_is_hidden(s_page)); }

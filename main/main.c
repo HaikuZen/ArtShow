@@ -45,6 +45,13 @@ static void slideshow_shown(bool shown) {
     radio_ui_slideshow(shown);
 }
 
+/* the pages the radio plays on, besides the slideshow */
+static void gallery_page(bool shown) { gallery_shown(shown); radio_ui_here(shown); }
+static void clock_page(bool shown) { clock_page_shown(shown); radio_ui_here(shown); }
+static void weather_page(bool shown) { weather_page_shown(shown); radio_ui_here(shown); }
+static void sun_moon_page(bool shown) { sun_moon_shown(shown); radio_ui_here(shown); }
+static void artwork_page(bool shown) { radio_ui_here(shown); }
+
 static void nvs_init(void) {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -85,11 +92,11 @@ void app_main(void) {
         brightness_ui_create(scr);
         const menu_page_t pages[] = {
             { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown, 0x2A2420 },   /* first: the Gallery's menu_select(0) */
-            { LV_SYMBOL_LIST "  Gallery", gallery, gallery_shown, 0x7A2228 },
-            { LV_SYMBOL_BELL "  Clock", clock, clock_page_shown, 0xD7322B },
-            { LV_SYMBOL_CHARGE "  Weather", weather, weather_page_shown, 0x2F4A7A },
-            { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_shown, 0xC8692B },
-            { LV_SYMBOL_EYE_OPEN "  Artwork of the Day", artwork, NULL, 0x6B4A2E },
+            { LV_SYMBOL_LIST "  Gallery", gallery, gallery_page, 0x7A2228 },
+            { LV_SYMBOL_BELL "  Clock", clock, clock_page, 0xD7322B },
+            { LV_SYMBOL_CHARGE "  Weather", weather, weather_page, 0x2F4A7A },
+            { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_page, 0xC8692B },
+            { LV_SYMBOL_EYE_OPEN "  Artwork of the Day", artwork, artwork_page, 0x6B4A2E },
             { LV_SYMBOL_SHUFFLE "  Generative", gen, generative_shown, 0x7A4FA0 },
             { LV_SYMBOL_AUDIO "  Album Wall", albums, album_wall_shown, 0xB08A3E },
             { LV_SYMBOL_SETTINGS "  Settings", settings, settings_page_shown, 0x1C4F8A },

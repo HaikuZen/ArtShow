@@ -22,7 +22,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/sun_moon.c/.h`, `main/sky_paint.c/.h`, `main/sky_view.c/.h`, `main/astro.c/.h` | the Sun and Moon page, the painted sky (shared with the Weather page), and the astronomy under it: see Sun and Moon below |
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
 | `main/music.c/.h`, `main/music_synth.c/.h` | the Generative page's music: see Generative below |
-| `main/radio.c/.h`, `main/radio_ui.c/.h` | the slideshow's radio: an internet station, quietly. See Radio below |
+| `main/radio.c/.h`, `main/radio_ui.c/.h` | the radio: an internet station, quietly, with the slideshow and five other pages. See Radio below |
 | `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
 | `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page (a salon hang); its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
@@ -144,8 +144,17 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 
 ## Radio
 
-- `main/radio.c`: internet radio while the slideshow is on screen (under Now
-  Showing and Diffuse too), only then. Built-in stations, quiet ones (no
+- `main/radio.c`: internet radio while the slideshow (under Now Showing and
+  Diffuse too), the Gallery, the Clock, the Weather, the Sun and Moon or
+  the Artwork of the Day is on screen; not on the Generative page (its own
+  music), the Album Wall or Settings. `main.c` wraps those pages' `shown`
+  with `radio_ui_here()`; the menu hides one page then shows the next, so
+  `radio_ui.c` applies the result 20 ms later (an LVGL timer): between two
+  radio pages the stream isn't dropped (measured: one connection through
+  all six). The note button is only on the slideshow (the other pages
+  have no free corner: the book, the calendar, the day cards and the
+  Gallery's grid reach them); elsewhere it's switched from there or from
+  Settings. Built-in stations, quiet ones (no
   talk, no beat, no ads), plain HTTP: SomaFM's Drone Zone and Deep Space
   One, Ambient Sleeping Pill, Radio Swiss Classic, France Musique Baroque
   (MP3), Radio Paradise Mellow (AAC). `config.json`'s `"radio": {
@@ -177,10 +186,16 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   or Latin-1 from older servers (Radio Swiss Classic's), made UTF-8. All
   six built-in stations send titles. `radio_info()`: the station, the
   title, MP3/AAC, kbit/s, the rate, stereo or mono.
-- Now Showing's "Listening" (under the picture's folder, a cream rule down
-  its left as the wall label's): the station, the piece, the stream; a 1 s
-  timer while the page is open, a label redrawn only when its text
-  changes. With the page open and the radio on, the lowest free internal
+- Now Showing's "Listening" (under the picture's folder), a record sleeve:
+  a small record drawn in its draw event (grooves, a still sheen from the
+  top left, a label in the picture's average colour) whose label turns
+  while a station plays (a printed band and dot, 24 degrees each 120 ms,
+  only the label's square invalidated: ~33 rpm); beside it the station in
+  spaced capitals, the piece (the title after " - "), its artist, and
+  the stream under a hairline. A 1 s timer while the page is open, a
+  label redrawn only when its text changes. A frame of the turn measured
+  ~17.5 ms in `lv_refr_now`, the whole disc or the label alike: the wait
+  for the panel's next frame (60 Hz), not drawing. With the page open and the radio on, the lowest free internal
   RAM was 64 KB (the boot's TLS connections, the lookup, the glow).
 - `main/radio_ui.c`: a note button top right, left of the drop (cream on,
   grey off; `g_settings.radio_on`); a tap switches it and a dark capsule
