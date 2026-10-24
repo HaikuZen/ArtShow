@@ -408,6 +408,18 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   third). Save: JPEG 4:4:4 q92 into `/sdcard/Diffused/<name> - <effect>.jpg`
   and `slideshow_added`. Testing Save on the board puts files in the
   slideshow: remove them after (the Rescan drops them from the index).
+- The page's look, a printmaker's ink drawer: the effects as chips in a
+  dark tray along the bottom, each with a swatch drawn of the inks it
+  prints with (Newsprint's two, E-paper's six, the Game Boy's four; the
+  picture's own colours, a quadrant's average each, as stripes, 8-bit
+  squares, Melt's wash in three gradients, Coral's spots); the chosen one
+  lifted and outlined in cream, its progress a hairline (redrawn once a
+  second); Save a seal-red chop; the status a dark capsule. While an
+  effect runs the view is redrawn only above the tray (the strip under it
+  at the end), so the tray and its chips aren't redrawn with it four times
+  a second. Timings vary from run to run: Melt took 15.0-16.0 s with the
+  old page and 15.2-17.9 s with this one (five runs), 8-bit 0.2 s or 1.5 s
+  when the boot's network work overlaps.
 
 ## Sun and Moon
 
