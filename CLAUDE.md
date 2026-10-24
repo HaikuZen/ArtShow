@@ -12,7 +12,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | path | what |
 |---|---|
 | `main/main.c` | `app_main`: `board_init()`, the card mount (before Wi-Fi) and `config.json`, NVS, then (under the LVGL lock) the slideshow, Now Showing (its "?"), Diffuse (its drop), the gallery, the clock, weather, sun and moon, artwork, generative, album wall and settings pages, the Wi-Fi button, the brightness slider and the menu; then Wi-Fi, NTP and the weather and artwork tasks |
-| `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time, up to `MAX_PAGES` (16; more are dropped). New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, and a row in that table |
+| `main/menu.c/.h` | the hamburger menu, top left: a table of pages (`menu_page_t` in `main.c`), one shown at a time, up to `MAX_PAGES` (16; more are dropped). New page: a `create` that returns a hidden full-screen object, a `shown(bool)`, a colour (its icon's in the menu) and a row in that table. The list is a museum's floor guide: a cream leaflet, each page a room (a Roman numeral in seal red, the name, the label's LV_SYMBOL as its icon in the page's colour), the room on show marked with a seal-red rule. No shadow on it: it sits over the slideshow's transitions, and with one an SD read failed for its DMA buffer once (a dark outline instead) |
 | `main/clock_page.c/.h` | the clock page, a Bauhaus poster: an analog clock after Max Bill's (drawn), the time and date, the month's calendar (weeks from Monday) with notes per day |
 | `main/notes.c/.h` | the calendar's notes, in their own SQLite database: see Clock below |
 | `main/time_sync.c/.h` | the time zone and SNTP: see Clock below |

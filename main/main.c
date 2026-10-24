@@ -79,15 +79,15 @@ void app_main(void) {
         wifi_ui_create(scr);
         brightness_ui_create(scr);
         const menu_page_t pages[] = {
-            { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown },   /* first: the Gallery's menu_select(0) */
-            { LV_SYMBOL_LIST "  Gallery", gallery, gallery_shown },
-            { LV_SYMBOL_BELL "  Clock", clock, clock_page_shown },
-            { LV_SYMBOL_CHARGE "  Weather", weather, weather_page_shown },
-            { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_shown },
-            { LV_SYMBOL_EYE_OPEN "  Artwork of the Day", artwork, NULL },
-            { LV_SYMBOL_SHUFFLE "  Generative", gen, generative_shown },
-            { LV_SYMBOL_AUDIO "  Album Wall", albums, album_wall_shown },
-            { LV_SYMBOL_SETTINGS "  Settings", settings, settings_page_shown },
+            { LV_SYMBOL_IMAGE "  Slideshow", NULL, slideshow_shown, 0x2A2420 },   /* first: the Gallery's menu_select(0) */
+            { LV_SYMBOL_LIST "  Gallery", gallery, gallery_shown, 0x7A2228 },
+            { LV_SYMBOL_BELL "  Clock", clock, clock_page_shown, 0xD7322B },
+            { LV_SYMBOL_CHARGE "  Weather", weather, weather_page_shown, 0x2F4A7A },
+            { LV_SYMBOL_LOOP "  Sun and Moon", sky, sun_moon_shown, 0xC8692B },
+            { LV_SYMBOL_EYE_OPEN "  Artwork of the Day", artwork, NULL, 0x6B4A2E },
+            { LV_SYMBOL_SHUFFLE "  Generative", gen, generative_shown, 0x7A4FA0 },
+            { LV_SYMBOL_AUDIO "  Album Wall", albums, album_wall_shown, 0xB08A3E },
+            { LV_SYMBOL_SETTINGS "  Settings", settings, settings_page_shown, 0x1C4F8A },
         };
         menu_create(scr, pages, sizeof pages / sizeof pages[0]);
         night_start();

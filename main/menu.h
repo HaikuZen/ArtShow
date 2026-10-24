@@ -7,6 +7,7 @@ typedef struct {
     const char *label;                 /* in the menu (may start with an LV_SYMBOL) */
     lv_obj_t *page;                    /* shown over the screen; NULL: the screen itself (the slideshow) */
     void (*shown)(bool shown);         /* told when it's shown or hidden, in the LVGL task; may be NULL */
+    uint32_t color;                    /* its icon's colour in the menu, 0xRRGGBB (the page's own); 0: grey */
 } menu_page_t;
 
 /* the button and its list; pages[0] is shown first. Call holding the LVGL lock,
