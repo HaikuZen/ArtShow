@@ -25,7 +25,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
 | `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page (a salon hang); its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
-| `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page, and night mode: see Settings below |
+| `main/settings.c/.h`, `main/settings_page.c/.h`, `main/night.c/.h` | the settings (NVS), their page (a blueprint), and night mode: see Settings below |
 | `main/now_showing.c/.h` | "?" top right of the slideshow: the picture on show and Wikipedia's summary of it: see Now Showing below |
 | `main/diffuse.c/.h`, `main/diffuse_page.c/.h` | the drop left of "?": diffusion effects on the picture on show. See Diffuse below |
 | `main/net.c/.h` | HTTPS GETs (into memory, or straight into a file; redirects followed; a connection kept for a run of calls to one server), JSON path helpers, cJSON in PSRAM |
@@ -469,6 +469,14 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   frequency. 25 % is steady: `BL_STEADY_MIN` (board.h) is the floor of the
   brightness slider and the night level (which also has 0: off); a lower
   saved level is raised at load.
+- `main/settings_page.c`: a blueprint. A cyanotype ground with a drafting
+  grid (one 80 x 80 tile, tiled), chalk line work: numbered sections in
+  spaced capitals over a rule, sliders drawn as rulers (a hairline, the
+  part up to the value heavier, ticks; LVGL draws only the open knob, the
+  main and indicator parts transparent), outlined switches, boxes and
+  buttons (filled when chosen: set the checked state's colour, or the
+  theme's blue shows), the sheet's border and a dash-dot centre line
+  between the columns, a title block top right (the firmware's version).
 - The page's About: Wi-Fi (`wifi_info`: esp_netif, no call to the C6), free
   memory, pictures, uptime, the firmware's version and build date.
 - Artwork of the Day's Save keeps a full-size picture only if it's within

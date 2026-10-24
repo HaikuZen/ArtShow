@@ -1,7 +1,11 @@
 /* settings_page.c - two scrolling columns: the slideshow's settings and its
  * folders on the left; night mode and about the board on the right. A change
  * takes effect at once (the next picture, for the slideshow's) and is kept
- * in NVS: a slider's when it's let go, a switch's when it flips. */
+ * in NVS: a slider's when it's let go, a switch's when it flips.
+ * A blueprint: a cyanotype ground with a drafting grid (one tile, tiled),
+ * chalk-white line work, numbered sections, sliders drawn as rulers with
+ * ticks, outlined switches and boxes, a dash-dot centre line between the
+ * columns and a drawing's title block top right. */
 #include "settings_page.h"
 #include "settings.h"
 #include "night.h"
@@ -17,10 +21,11 @@
 #include <string.h>
 #include <time.h>
 
-#define BG          0x0D1B2A
-#define MINOR       0x778DA9
-#define TEXT        0xE0F0FF
+#define BG          0x1C4F8A   /* the cyanotype's blue */
+#define MINOR       0xA9C4E0   /* notes, values: pale blue */
+#define TEXT        0xF2F7FC   /* chalk */
 #define MAX_FOLDERS 16
+#define TILE        80         /* the grid: a line each 16 px, a heavier one each 80 */
 
 /* seconds per picture: the slider's steps */
 static const int STEPS[] = { 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1800, 3600 };
@@ -73,9 +78,112 @@ static lv_obj_t *column(lv_obj_t *page, int32_t x, int32_t w) {
     return c;
 }
 
+/* "01  SLIDESHOW": a numbered section, spaced capitals over a rule */
 static void heading(lv_obj_t *col, const char *txt) {
-    lv_obj_t *l = label(col, &art_font_24, TEXT, txt);
-    lv_obj_set_style_pad_top(l, 6, 0);
+    static int n;
+    char buf[48];
+    snprintf(buf, sizeof buf, "%02d   %s", ++n, txt);
+    lv_obj_t *l = label(col, &art_font_20, TEXT, buf);
+    lv_obj_set_width(l, LV_PCT(100));
+    lv_obj_set_style_text_letter_space(l, 3, 0);
+    lv_obj_set_style_pad_top(l, 8, 0);
+    lv_obj_set_style_pad_bottom(l, 4, 0);
+    lv_obj_set_style_border_side(l, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(l, 1, 0);
+    lv_obj_set_style_border_color(l, lv_color_hex(TEXT), 0);
+    lv_obj_set_style_border_opa(l, LV_OPA_60, 0);
+}
+
+/* a slider as a ruler: a hairline, the part up to the value heavier, ticks
+ * under it; LVGL draws only the knob (an open circle) */
+static void ruler_draw(lv_event_t *e) {
+    lv_obj_t *s = lv_event_get_current_target_obj(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_area_t a;
+    lv_obj_get_coords(s, &a);
+    int min = lv_slider_get_min_value(s), max = lv_slider_get_max_value(s), v = lv_slider_get_value(s);
+    int w = lv_area_get_width(&a) - 1, cy = (a.y1 + a.y2) / 2;
+    int x = a.x1 + (max > min ? (int)((int64_t)w * (v - min) / (max - min)) : 0);
+    lv_draw_rect_dsc_t d;
+    lv_draw_rect_dsc_init(&d);
+    d.bg_color = lv_color_hex(TEXT);
+    d.bg_opa = LV_OPA_50;
+    lv_area_t r = { a.x1, cy, a.x2, cy };
+    lv_draw_rect(layer, &d, &r);
+    d.bg_opa = LV_OPA_COVER;
+    r = (lv_area_t){ a.x1, cy - 1, x, cy + 1 };
+    lv_draw_rect(layer, &d, &r);
+    int n = max - min, step = n > 16 ? (n + 11) / 12 : 1;
+    for (int k = 0; k <= n; k += step) {
+        int tx = a.x1 + (n ? (int)((int64_t)w * k / n) : 0);
+        bool big = k == 0 || k + step > n;
+        d.bg_opa = big ? LV_OPA_COVER : LV_OPA_70;
+        r = (lv_area_t){ tx, cy + 4, tx, cy + (big ? 11 : 8) };
+        lv_draw_rect(layer, &d, &r);
+    }
+    if (n % step) {   /* the far end, off the step */
+        r = (lv_area_t){ a.x2, cy + 4, a.x2, cy + 11 };
+        lv_draw_rect(layer, &d, &r);
+    }
+}
+
+/* the page: the drawing's border and the centre line between the columns
+ * (the grid is the background's tile) */
+static void sheet_draw(lv_event_t *e) {
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_draw_border_dsc_t b;
+    lv_draw_border_dsc_init(&b);
+    b.color = lv_color_hex(TEXT);
+    b.opa = LV_OPA_50;
+    b.width = 1;
+    lv_area_t a = { 6, 6, 1017, 593 };
+    lv_draw_border(layer, &b, &a);
+    lv_draw_rect_dsc_t d;
+    lv_draw_rect_dsc_init(&d);
+    d.bg_color = lv_color_hex(TEXT);
+    d.bg_opa = LV_OPA_40;
+    for (int y = 70; y < 534; y += 26) {   /* dash, dot */
+        lv_area_t r = { 512, y, 512, y + 15 };
+        lv_draw_rect(layer, &d, &r);
+        r.y1 = r.y2 = y + 20;
+        lv_draw_rect(layer, &d, &r);
+    }
+}
+
+/* the grid, tone on tone, with a little grain */
+static lv_image_dsc_t s_tile;
+
+static void grid_make(void) {
+    uint16_t *px = heap_caps_malloc(TILE * TILE * 2, MALLOC_CAP_SPIRAM);
+    if (!px) return;
+    lv_color_t ground = lv_color_hex(BG), chalk = lv_color_hex(TEXT);
+    uint32_t seed = 4242;
+    for (int y = 0; y < TILE; y++) {
+        for (int x = 0; x < TILE; x++) {
+            int opa = x == 0 || y == 0 ? 46 : x % 16 == 0 || y % 16 == 0 ? 20 : 0;
+            seed = seed * 1664525u + 1013904223u;
+            opa += (int)(seed >> 30);   /* 0..3 of grain */
+            lv_color_t c = lv_color_mix(chalk, ground, (lv_opa_t)opa);
+            px[y * TILE + x] = (uint16_t)(((c.red >> 3) << 11) | ((c.green >> 2) << 5) | (c.blue >> 3));
+        }
+    }
+    s_tile = (lv_image_dsc_t){
+        .header = { .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565, .w = TILE, .h = TILE, .stride = TILE * 2 },
+        .data_size = TILE * TILE * 2,
+        .data = (const uint8_t *)px,
+    };
+}
+
+/* outlined, chalk on blue; pressed or chosen: filled */
+static void outline(lv_obj_t *o, lv_part_t part) {
+    lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, part);
+    lv_obj_set_style_border_color(o, lv_color_hex(TEXT), part);
+    lv_obj_set_style_border_width(o, 2, part);
+    lv_obj_set_style_border_opa(o, LV_OPA_COVER, part);
+    lv_obj_set_style_shadow_width(o, 0, part);
+    lv_obj_set_style_text_color(o, lv_color_hex(TEXT), part);
+    lv_obj_set_style_bg_color(o, lv_color_hex(TEXT), part | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(o, LV_OPA_30, part | LV_STATE_PRESSED);
 }
 
 static void save_cb(lv_event_t *e) { settings_save(); }
@@ -90,6 +198,17 @@ static void slider_row(lv_obj_t *col, const char *title, int min, int max, int v
     *value = label(top, &art_font_20, MINOR, "");
     lv_obj_t *s = lv_slider_create(row);
     lv_obj_set_width(s, LV_PCT(94));
+    lv_obj_set_height(s, 18);
+    lv_obj_set_style_bg_opa(s, LV_OPA_TRANSP, LV_PART_MAIN);   /* the ruler is drawn */
+    lv_obj_set_style_bg_opa(s, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s, lv_color_hex(BG), LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(s, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_set_style_border_color(s, lv_color_hex(TEXT), LV_PART_KNOB);
+    lv_obj_set_style_border_width(s, 2, LV_PART_KNOB);
+    lv_obj_set_style_shadow_width(s, 0, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(s, 0, LV_PART_KNOB);
+    lv_obj_set_style_bg_color(s, lv_color_hex(TEXT), LV_PART_KNOB | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(s, ruler_draw, LV_EVENT_DRAW_MAIN_BEGIN, NULL);
     lv_obj_set_style_margin_left(s, 12, 0);   /* the knob sticks out */
     lv_slider_set_range(s, min, max);
     lv_slider_set_value(s, val, LV_ANIM_OFF);
@@ -111,6 +230,13 @@ static void switch_row(lv_obj_t *col, const char *title, bool *field) {
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     label(row, &art_font_20, TEXT, title);
     lv_obj_t *sw = lv_switch_create(row);
+    outline(sw, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(sw, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(TEXT), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_40, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(TEXT), LV_PART_KNOB);
+    lv_obj_set_style_shadow_width(sw, 0, LV_PART_KNOB);
     lv_obj_set_state(sw, LV_STATE_CHECKED, *field);
     lv_obj_set_ext_click_area(sw, 12);
     lv_obj_add_event_cb(sw, switch_cb, LV_EVENT_VALUE_CHANGED, field);
@@ -158,6 +284,11 @@ static void list_folders(void) {
         lv_checkbox_set_text(cb, txt);
         lv_obj_set_style_text_font(cb, &art_font_20, 0);
         lv_obj_set_style_text_color(cb, lv_color_hex(TEXT), 0);
+        outline(cb, LV_PART_INDICATOR);   /* an open box; ticked: chalk with a blue tick */
+        lv_obj_set_style_radius(cb, 2, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(cb, LV_OPA_COVER, LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(cb, lv_color_hex(TEXT), LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(cb, lv_color_hex(BG), LV_PART_INDICATOR | LV_STATE_CHECKED);
         lv_obj_set_state(cb, LV_STATE_CHECKED, settings_folder_on(names[k]));
         lv_obj_set_ext_click_area(cb, 6);
         lv_obj_add_event_cb(cb, folder_cb, LV_EVENT_VALUE_CHANGED, (void *)(intptr_t)k);
@@ -289,11 +420,41 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     lv_obj_set_style_radius(page, 0, 0);
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_set_scrollable(page, false);
-    lv_obj_set_pos(label(page, &art_font_24, TEXT, "Settings"), 90, 12);   /* right of the menu button */
+    grid_make();
+    if (s_tile.data) {
+        lv_obj_set_style_bg_image_src(page, &s_tile, 0);
+        lv_obj_set_style_bg_image_tiled(page, true, 0);
+    }
+    lv_obj_add_event_cb(page, sheet_draw, LV_EVENT_DRAW_MAIN, NULL);
+    lv_obj_t *title = label(page, &art_font_24, TEXT, "Settings");   /* right of the menu button */
+    lv_obj_set_style_text_letter_space(title, 2, 0);
+    lv_obj_set_pos(title, 90, 14);
+
+    /* the title block, top right: three cells */
+    lv_obj_t *tb = box(page, LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(tb, 372, 40);
+    lv_obj_set_pos(tb, 1024 - 20 - 372, 14);
+    lv_obj_set_style_border_color(tb, lv_color_hex(TEXT), 0);
+    lv_obj_set_style_border_width(tb, 1, 0);
+    char rev[16];
+    snprintf(rev, sizeof rev, "REV %.7s", esp_app_get_description()->version);
+    const char *cells[] = { "DWG ART-SET", "SCALE 1:1", rev };
+    const int widths[] = { 132, 104, 136 };
+    for (int k = 0; k < 3; k++) {
+        lv_obj_t *c = box(tb, LV_FLEX_FLOW_ROW);
+        lv_obj_set_size(c, widths[k], LV_PCT(100));
+        lv_obj_set_flex_align(c, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        if (k) {
+            lv_obj_set_style_border_side(c, LV_BORDER_SIDE_LEFT, 0);
+            lv_obj_set_style_border_width(c, 1, 0);
+            lv_obj_set_style_border_color(c, lv_color_hex(TEXT), 0);
+        }
+        lv_obj_set_style_text_letter_space(label(c, &art_font_16, k == 2 ? MINOR : TEXT, cells[k]), 1, 0);
+    }
 
     /* the slideshow */
     lv_obj_t *left = column(page, 24, 480);
-    heading(left, "Slideshow");
+    heading(left, "SLIDESHOW");
     int step = 0;
     while (step + 1 < N_STEPS && STEPS[step] < g_settings.interval_s) step++;
     slider_row(left, "Each picture", 0, N_STEPS - 1, step, interval_cb, &s_interval_v);
@@ -302,26 +463,27 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     switch_row(left, "Shuffle (else by name)", &g_settings.shuffle);
     switch_row(left, "Fill the screen (crop)", &g_settings.fill);
     switch_row(left, "Only favourites (the Gallery's stars)", &g_settings.favourites_only);
-    heading(left, "Folders");
+    heading(left, "FOLDERS");
     s_folders = box(left, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_folders, 10, 0);
 
     /* the card's index (index.c) */
-    heading(left, "Card index");
+    heading(left, "CARD INDEX");
     s_index = note(left, "");
     lv_obj_set_style_text_color(s_index, lv_color_hex(TEXT), 0);
     note(left, "New pictures on the card show after a rescan (pictures saved from Artwork of the Day show at once). "
                "Pictures that can't be shown are left out until they change.");
     lv_obj_t *b = lv_button_create(left);
-    lv_obj_set_style_bg_color(b, lv_color_hex(0x415A77), 0);
-    lv_obj_set_style_shadow_width(b, 0, 0);
-    lv_obj_t *bl = label(b, &art_font_20, TEXT, "Rescan the card");
+    outline(b, LV_PART_MAIN);
+    lv_obj_set_style_radius(b, 2, 0);
+    lv_obj_t *bl = label(b, &art_font_20, TEXT, "RESCAN THE CARD");
+    lv_obj_set_style_text_letter_space(bl, 2, 0);
     lv_obj_center(bl);
     lv_obj_add_event_cb(b, rescan_cb, LV_EVENT_CLICKED, NULL);
 
     /* night, and about */
     lv_obj_t *right = column(page, 528, 472);
-    heading(right, "Night");
+    heading(right, "NIGHT");
     lv_obj_t *bm = lv_buttonmatrix_create(right);
     static const char *modes[] = { "Off", "Sunset to sunrise", "Set hours", "" };
     lv_buttonmatrix_set_map(bm, modes);
@@ -334,6 +496,12 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     lv_obj_set_style_bg_opa(bm, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(bm, 0, 0);
     lv_obj_set_style_pad_all(bm, 0, 0);
+    outline(bm, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(bm, 1, LV_PART_ITEMS);
+    lv_obj_set_style_radius(bm, 2, LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(bm, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(bm, lv_color_hex(TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(bm, lv_color_hex(BG), LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_add_event_cb(bm, mode_cb, LV_EVENT_VALUE_CHANGED, NULL);
     s_sun_info = note(right, "");
     s_hours = box(right, LV_FLEX_FLOW_COLUMN);
@@ -349,7 +517,7 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     slider_row(right, "Backlight switching", 0, N_HZ - 1, hz, hz_cb, &s_hz_v);
     note(right, "If the screen flickers when it's dim, try another speed: it changes at once.");
 
-    heading(right, "About");
+    heading(right, "ABOUT");
     s_about = label(right, &art_font_16, TEXT, "");
     lv_obj_set_style_text_line_space(s_about, 6, 0);
 
