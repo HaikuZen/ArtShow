@@ -26,6 +26,9 @@ static const char *TAG = "settings";
 #ifndef CONFIG_ARTSHOW_FILL
 #define CONFIG_ARTSHOW_FILL 0
 #endif
+#ifndef CONFIG_ARTSHOW_DEMO
+#define CONFIG_ARTSHOW_DEMO 0
+#endif
 
 settings_t g_settings = {
     .interval_s = CONFIG_ARTSHOW_INTERVAL_S,
@@ -42,6 +45,7 @@ settings_t g_settings = {
     .gen_music = true,
     .captions = 1,
     .radio_volume = 30,
+    .demo = CONFIG_ARTSHOW_DEMO,
 };
 
 typedef struct {

@@ -296,14 +296,16 @@ static void chip_style(lv_obj_t *b, uint32_t ground) {
     lv_obj_set_style_bg_opa(b, LV_OPA_30, LV_STATE_PRESSED);
 }
 
-static void fx_cb(lv_event_t *e) {
-    s_want = (int)(intptr_t)lv_event_get_user_data(e);
+static void pick(int k) {
+    s_want = k;
     s_active = s_want;
     s_prog = 0;
     for (int k = 0; k < diffuse_nfx && k < 8; k++) lv_obj_set_state(s_fx_btn[k], LV_STATE_CHECKED, k == s_active);
     s_stop = false;
     if (s_task) xTaskNotifyGive(s_task);
 }
+
+static void fx_cb(lv_event_t *e) { pick((int)(intptr_t)lv_event_get_user_data(e)); }
 
 static void save_cb(lv_event_t *e) {
     s_want_save = true;
@@ -349,6 +351,11 @@ static void set_open(bool on) {
 }
 
 static void button_cb(lv_event_t *e) { set_open(lv_obj_is_hidden(s_page)); }
+
+void diffuse_page_open(bool on, int fx) {
+    if (on == lv_obj_is_hidden(s_page)) set_open(on);
+    if (on && !lv_obj_is_hidden(s_page) && fx >= 0 && fx < diffuse_nfx) pick(fx);   /* after the picture's load: the task's order */
+}
 
 void diffuse_page_slideshow(bool shown) {
     if (!shown && !lv_obj_is_hidden(s_page)) {

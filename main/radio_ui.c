@@ -67,6 +67,14 @@ void radio_ui_off(void) {
     paint();
 }
 
+void radio_ui_on(void) {
+    if (g_settings.radio_on) return;
+    g_settings.radio_on = 1;
+    settings_save();
+    paint();
+    radio_ui_here(s_here);   /* plays if this page is one of the radio's */
+}
+
 void radio_ui_here(bool here) {
     s_here = here;
     lv_timer_reset(s_apply);

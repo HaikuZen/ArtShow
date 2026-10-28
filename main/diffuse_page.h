@@ -12,3 +12,6 @@ void diffuse_page_create(lv_obj_t *parent);
 /* the menu shows the slideshow, or another page (in the LVGL task): the
  * button is only on the slideshow, and another page closes the view */
 void diffuse_page_slideshow(bool shown);
+/* open (and run diffuse_fx[fx], if fx >= 0) or close it, as its buttons
+ * would (the demo tour); on the slideshow, in the LVGL task */
+void diffuse_page_open(bool on, int fx);

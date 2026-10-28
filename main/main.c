@@ -31,6 +31,7 @@
 #include "audio.h"
 #include "radio.h"
 #include "radio_ui.h"
+#include "demo.h"
 
 static const char *TAG = "app";
 
@@ -103,6 +104,7 @@ void app_main(void) {
         };
         menu_create(scr, pages, sizeof pages / sizeof pages[0]);
         night_start();
+        demo_start();
         lvgl_port_unlock();
     }
     audio_init();

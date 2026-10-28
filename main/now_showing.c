@@ -502,6 +502,10 @@ static void listen_create(lv_obj_t *page) {
 
 static void button_cb(lv_event_t *e) { set_open(lv_obj_is_hidden(s_page)); }
 
+void now_showing_open(bool on) {
+    if (on == lv_obj_is_hidden(s_page)) set_open(on);
+}
+
 /* ---- the wall label ---- */
 
 /* the label's opacity, 0..255: each part's own (an opacity on the card as a

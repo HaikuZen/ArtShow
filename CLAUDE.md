@@ -23,6 +23,7 @@ The wizard and its full recipe live in the advance-p4-wiz repo
 | `main/generative.c/.h`, `main/gen_art.c/.h` | the Generative page: see Generative below |
 | `main/music.c/.h`, `main/music_synth.c/.h` | the Generative page's music: see Generative below |
 | `main/radio.c/.h`, `main/radio_ui.c/.h` | the radio: an internet station, quietly, with the slideshow and five other pages. See Radio below |
+| `main/demo.c/.h` | the demo tour: the app shows itself, page after page (to film it). See Demo tour below |
 | `main/album_wall.c/.h`, `main/albums.c/.h` | the Album Wall: a Deezer user's favourite albums. See Album Wall below |
 | `main/gallery.c/.h`, `main/thumb.c/.h` | the Gallery page (a salon hang); its thumbnails. See Gallery below |
 | `main/index.c/.h`, `components/sqlite3/` | the picture index: SQLite on the card. See Index below |
@@ -55,6 +56,10 @@ idf.py -p /dev/ttyUSB3 -b 460800 flash monitor
 - Run `idf.py` from an ESP-IDF 6.x terminal (`export.sh`, or EIM's `activate_idf_*.sh`).
 - After editing `sdkconfig.defaults`, delete `sdkconfig` and rebuild, or the
   change is not applied. Then run `--check` again.
+- The port moves when the board is plugged in again (`/dev/ttyUSB3`, then
+  `/dev/ttyUSB0`; a mobile modem takes the others): the board's is the CH340,
+  `1a86:7522` (`/sys/class/tty/ttyUSB*/device/../uevent`). "No serial data
+  received" on a port that exists: likely the wrong one.
 - Flash through the **UART** USB socket (CH340), at **460800** baud: 921600
   corrupted reads on this board. If it won't enter the bootloader, hold BOOT,
   press RESET, let go of BOOT.
@@ -176,7 +181,8 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
 - The night switches it off (`night.c` > `radio_ui_off`: `radio_on` 0,
   saved, as a tap would): when the night begins (night mode's, or sunset
   to sunrise with night mode off; a boot at night too) and when night
-  mode darkens the screen. Only a tap (or Settings) turns it on again;
+  mode darkens the screen; not while the demo tour is on (switched
+  off at night, the radio goes too). Only a tap (or Settings) turns it on again;
   turned on at night, it plays till the screen goes dark. Left on, it
   would stream all night (128 kbit/s: ~1.4 GB a day).
 - `esp_audio_codec` is pinned at **2.5.0**: 2.6+ is built for P4 rev >= 3
@@ -210,6 +216,30 @@ The P4 has no radio: Wi-Fi runs on the onboard ESP32-C6, over 4-bit SDIO (CLK
   page's music and back: the buffer stays full beside the slideshow's
   9 s software decodes; the lowest free internal RAM 85-90 KB (84 KB
   before); transitions 11-23 frames a change (16-26 without it).
+
+## Demo tour
+
+- `main/demo.c`: `g_settings.demo` (Settings > Demo; menuconfig >
+  ArtShow slideshow > Demo tour, off, for the first boot) runs a table of
+  steps, a 500 ms LVGL timer: the slideshow (45 s), Now Showing (15 s),
+  Diffuse running 8-bit (12 s), the slideshow, the Gallery, Clock,
+  Weather, Sun and Moon, Artwork (10 s each), Generative (30 s), the
+  Album Wall's Spotlight (14 s) and Wall (10 s), then again: ~3.5 min a
+  loop. Pages by their index in `main.c`'s `pages[]` (a new page there:
+  check demo.c's enum). The overlays and the Album Wall's mode through
+  `now_showing_open`, `diffuse_page_open`, `album_wall_mode`, as their
+  buttons would. It never saves, never touches Wi-Fi or Settings.
+- A touch pauses it (LVGL's inactive time falls; the tour's own calls
+  don't count as activity); 2 minutes untouched and it starts again from
+  the slideshow. Switched on in Settings it waits 3 s, then leaves.
+- It switches the radio on (saved, as a tap). While it's on, night mode
+  neither dims the screen nor switches the radio off: filmed in the
+  evening, it stays lit. Left on, it would light the screen and stream
+  all night.
+- Measured on the board, a whole loop after sunset: every step, no
+  errors, the radio kept across the radio pages; the lowest free
+  internal RAM 50 KB (Now Showing's lookup while the boot's TLS
+  connections were open), ~210 KB free between steps.
 
 ## Slideshow
 

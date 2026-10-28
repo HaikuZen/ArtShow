@@ -51,6 +51,14 @@ menu "ArtShow slideshow"
             On: each picture is cropped to the screen's shape and fills it.
             Off: each is shown whole, with black bars.
 
+    config ARTSHOW_DEMO
+        bool "Demo tour"
+        default n
+        help
+            On: the app shows itself, page after page, in a loop (to film
+            it). A touch pauses it; it starts again after 2 minutes
+            untouched. The Settings page switches it too.
+
 endmenu
 
 menu "ArtShow now showing"

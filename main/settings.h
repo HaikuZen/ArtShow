@@ -28,6 +28,7 @@ typedef struct {
     int32_t radio_on;       /* the slideshow's radio: 1 on, 0 off */
     int32_t radio_station;  /* ... radio.c's list */
     int32_t radio_volume;   /* ... 5..100 (the level is its square: 30 is ~ -21 dB) */
+    int32_t demo;           /* the demo tour (demo.c): 1 on */
 } settings_t;
 
 extern settings_t g_settings;

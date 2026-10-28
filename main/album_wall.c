@@ -53,7 +53,7 @@ typedef struct {
 } req_t;
 
 static lv_obj_t *s_page, *s_sub, *s_spot, *s_wall, *s_cover, *s_blank, *s_blank_title, *s_title, *s_artist, *s_meta, *s_tracks;
-static lv_obj_t *s_prev, *s_next, *s_pages, *s_cells[PER_PAGE], *s_tabs;
+static lv_obj_t *s_prev, *s_next, *s_pages, *s_cells[PER_PAGE], *s_tabs, *s_modes;
 static lv_color_t s_avg;   /* the Spotlight's cover's average: the record's label, the accents */
 static lv_image_dsc_t s_cover_dsc, s_cell_dsc[PER_PAGE];
 static uint16_t *s_cover_px, *s_cell_px[PER_PAGE];
@@ -446,11 +446,21 @@ static void cell_cb(lv_event_t *e) {   /* a cover on the Wall: into the Spotligh
     ask(REQ_SPOT, s_pageno * PER_PAGE + k);
 }
 
-static void mode_cb(lv_event_t *e) {
-    s_wall_mode = lv_buttonmatrix_get_selected_button(lv_event_get_current_target_obj(e)) == 1;
+static void set_mode(bool wall) {
+    s_wall_mode = wall;
     show_mode();
     if (s_wall_mode) ask(REQ_WALL, s_pageno);
     else if (s_count) ask(REQ_SPOT, s_spot_k >= 0 ? s_spot_k : 0);
+}
+
+static void mode_cb(lv_event_t *e) {
+    set_mode(lv_buttonmatrix_get_selected_button(lv_event_get_current_target_obj(e)) == 1);
+}
+
+void album_wall_mode(bool wall) {
+    if (wall == s_wall_mode) return;
+    lv_buttonmatrix_set_button_ctrl(s_modes, wall ? 1 : 0, LV_BUTTONMATRIX_CTRL_CHECKED);   /* one_checked: the other unchecked */
+    set_mode(wall);
 }
 
 static void page_cb(lv_event_t *e) {
@@ -557,6 +567,7 @@ lv_obj_t *album_wall_create(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(modes, lv_color_hex(TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(modes, lv_color_hex(BG), LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_add_event_cb(modes, mode_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_modes = modes;
     s_prev = small_button(page, LV_SYMBOL_LEFT, page_cb, -1);
     lv_obj_set_pos(s_prev, 600, 4);
     s_pages = label(page, &art_font_20, TEXT);

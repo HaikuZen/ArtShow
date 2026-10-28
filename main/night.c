@@ -79,10 +79,10 @@ static bool radio_night(void) {
 static void check_cb(lv_timer_t *t) {
     /* night falls (or the boot is at night): the radio off; a tap on its
        button turns it on again, and it then plays till the screen goes dark */
-    bool rn = radio_night();
+    bool rn = radio_night() && !g_settings.demo;   /* the demo tour keeps its music; switched off at night, the radio goes */
     if (rn && !s_radio_night) radio_ui_off();
     s_radio_night = rn;
-    bool dark = is_night() && lv_display_get_inactive_time(NULL) > WAKE_MS;
+    bool dark = is_night() && !g_settings.demo && lv_display_get_inactive_time(NULL) > WAKE_MS;   /* the demo tour: lit, to be seen */
     if (dark == s_dark && !s_fresh) return;
     s_dark = dark;
     s_fresh = false;
@@ -93,6 +93,8 @@ static void check_cb(lv_timer_t *t) {
     if (dark) radio_ui_off();              /* ... and the radio switches off */
     ESP_LOGI(TAG, "%s: backlight %d %%", dark ? "night" : "day", level);
 }
+
+bool night_dark(void) { return s_dark; }
 
 void night_refresh(void) {
     s_fresh = true;

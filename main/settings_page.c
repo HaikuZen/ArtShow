@@ -582,6 +582,11 @@ lv_obj_t *settings_page_create(lv_obj_t *parent) {
     note(right, "Internet stations, quiet ones: the slideshow's note button (top right) switches it too. "
                 "Others in config.json on the card: \"radio\": { \"stations\": [ { \"name\": ..., \"url\": ... } ] }.");
 
+    heading(right, "DEMO");
+    switch_row32(right, "Demo tour", NULL, &g_settings.demo);
+    note(right, "The app shows itself, page after page, in a loop: to film it. A touch pauses it; "
+                "2 minutes untouched and it starts again.");
+
     heading(right, "ABOUT");
     s_about = label(right, &art_font_16, TEXT, "");
     lv_obj_set_style_text_line_space(s_about, 6, 0);

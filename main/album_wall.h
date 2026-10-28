@@ -9,3 +9,5 @@
 lv_obj_t *album_wall_create(lv_obj_t *parent);
 /* the menu shows or hides it (in the LVGL task) */
 void album_wall_shown(bool shown);
+/* Spotlight or Wall, as its tabs would (the demo tour); in the LVGL task */
+void album_wall_mode(bool wall);

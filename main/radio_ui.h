@@ -10,3 +10,5 @@ void radio_ui_slideshow(bool shown);
 void radio_ui_here(bool here);
 /* night: the radio off, as if its button were tapped (only a tap turns it on again) */
 void radio_ui_off(void);
+/* the radio on, as if its button were tapped (the demo tour) */
+void radio_ui_on(void);
